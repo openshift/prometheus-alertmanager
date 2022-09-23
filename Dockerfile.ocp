@@ -20,5 +20,6 @@ EXPOSE     9093
 RUN mkdir -p /alertmanager
 VOLUME     [ "/alertmanager" ]
 WORKDIR    /etc/alertmanager
+ENV        GODEBUG="netdns=cgo+2"
 ENTRYPOINT [ "/bin/alertmanager" ]
 CMD        [ "--storage.path=/alertmanager" ]
