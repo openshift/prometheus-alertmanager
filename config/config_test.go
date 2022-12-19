@@ -79,7 +79,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestReceiverExists(t *testing.T) {
@@ -100,7 +99,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestReceiverExistsForDeepSubRoute(t *testing.T) {
@@ -128,7 +126,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestReceiverHasName(t *testing.T) {
@@ -148,7 +145,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestMuteTimeExists(t *testing.T) {
@@ -174,7 +170,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestActiveTimeExists(t *testing.T) {
@@ -200,7 +195,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestTimeIntervalHasName(t *testing.T) {
@@ -233,7 +227,6 @@ route:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestMuteTimeNoDuplicates(t *testing.T) {
@@ -271,7 +264,6 @@ route:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestGroupByHasNoDuplicatedLabels(t *testing.T) {
@@ -292,7 +284,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestWildcardGroupByWithOtherGroupByLabels(t *testing.T) {
@@ -333,7 +324,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestRootRouteExists(t *testing.T) {
@@ -351,7 +341,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestRootRouteNoMuteTimes(t *testing.T) {
@@ -381,7 +370,6 @@ route:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestRootRouteNoActiveTimes(t *testing.T) {
@@ -476,7 +464,6 @@ receivers:
 	if err.Error() != expected {
 		t.Errorf("\nexpected:\n%q\ngot:\n%q", expected, err.Error())
 	}
-
 }
 
 func TestGroupIntervalIsGreaterThanZero(t *testing.T) {
@@ -859,16 +846,16 @@ receivers:
 
 func TestEmptyFieldsAndRegex(t *testing.T) {
 	boolFoo := true
-	var regexpFoo = Regexp{
+	regexpFoo := Regexp{
 		Regexp:   regexp.MustCompile("^(?:^(foo1|foo2|baz)$)$"),
 		original: "^(foo1|foo2|baz)$",
 	}
 
-	var expectedConf = Config{
-
+	expectedConf := Config{
 		Global: &GlobalConfig{
 			HTTPConfig: &commoncfg.HTTPClientConfig{
 				FollowRedirects: true,
+				EnableHTTP2:     true,
 			},
 			ResolveTimeout:  model.Duration(5 * time.Minute),
 			SMTPSmarthost:   HostPort{Host: "localhost", Port: "25"},
@@ -880,6 +867,7 @@ func TestEmptyFieldsAndRegex(t *testing.T) {
 			WeChatAPIURL:    mustParseURL("https://qyapi.weixin.qq.com/cgi-bin/"),
 			VictorOpsAPIURL: mustParseURL("https://alert.victorops.com/integrations/generic/20131114/alert/"),
 			TelegramAPIUrl:  mustParseURL("https://api.telegram.org"),
+			WebexAPIURL:     mustParseURL("https://webexapis.com/v1/messages"),
 		},
 
 		Templates: []string{
@@ -972,10 +960,43 @@ func TestSMTPHello(t *testing.T) {
 	}
 
 	const refValue = "host.example.org"
-	var hostName = c.Global.SMTPHello
+	hostName := c.Global.SMTPHello
 	if hostName != refValue {
 		t.Errorf("Invalid SMTP Hello hostname: %s\nExpected: %s", hostName, refValue)
 	}
+}
+
+func TestSMTPBothPasswordAndFile(t *testing.T) {
+	_, err := LoadFile("testdata/conf.smtp-both-password-and-file.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.smtp-both-password-and-file.yml", err)
+	}
+	if err.Error() != "at most one of smtp_auth_password & smtp_auth_password_file must be configured" {
+		t.Errorf("Expected: %s\nGot: %s", "at most one of auth_password & auth_password_file must be configured", err.Error())
+	}
+}
+
+func TestSMTPNoUsernameOrPassword(t *testing.T) {
+	_, err := LoadFile("testdata/conf.smtp-no-username-or-password.yml")
+	if err != nil {
+		t.Fatalf("Error parsing %s: %s", "testdata/conf.smtp-no-username-or-password.yml", err)
+	}
+}
+
+func TestGlobalAndLocalSMTPPassword(t *testing.T) {
+	config, err := LoadFile("testdata/conf.smtp-password-global-and-local.yml")
+	if err != nil {
+		t.Fatalf("Error parsing %s: %s", "testdata/conf.smtp-password-global-and-local.yml", err)
+	}
+
+	require.Equal(t, "/tmp/globaluserpassword", config.Receivers[0].EmailConfigs[0].AuthPasswordFile, "first email should use password file /tmp/globaluserpassword")
+	require.Emptyf(t, config.Receivers[0].EmailConfigs[0].AuthPassword, "password field should be empty when file provided")
+
+	require.Equal(t, "/tmp/localuser1password", config.Receivers[0].EmailConfigs[1].AuthPasswordFile, "second email should use password file /tmp/localuser1password")
+	require.Emptyf(t, config.Receivers[0].EmailConfigs[1].AuthPassword, "password field should be empty when file provided")
+
+	require.Equal(t, Secret("mysecret"), config.Receivers[0].EmailConfigs[2].AuthPassword, "third email should use password mysecret")
+	require.Emptyf(t, config.Receivers[0].EmailConfigs[2].AuthPasswordFile, "file field should be empty when password provided")
 }
 
 func TestGroupByAll(t *testing.T) {
@@ -995,12 +1016,39 @@ func TestVictorOpsDefaultAPIKey(t *testing.T) {
 		t.Fatalf("Error parsing %s: %s", "testdata/conf.victorops-default-apikey.yml", err)
 	}
 
-	var defaultKey = conf.Global.VictorOpsAPIKey
+	defaultKey := conf.Global.VictorOpsAPIKey
+	overrideKey := Secret("qwe456")
 	if defaultKey != conf.Receivers[0].VictorOpsConfigs[0].APIKey {
 		t.Fatalf("Invalid victorops key: %s\nExpected: %s", conf.Receivers[0].VictorOpsConfigs[0].APIKey, defaultKey)
 	}
-	if defaultKey == conf.Receivers[1].VictorOpsConfigs[0].APIKey {
-		t.Errorf("Invalid victorops key: %s\nExpected: %s", conf.Receivers[0].VictorOpsConfigs[0].APIKey, "qwe456")
+	if overrideKey != conf.Receivers[1].VictorOpsConfigs[0].APIKey {
+		t.Errorf("Invalid victorops key: %s\nExpected: %s", conf.Receivers[0].VictorOpsConfigs[0].APIKey, string(overrideKey))
+	}
+}
+
+func TestVictorOpsDefaultAPIKeyFile(t *testing.T) {
+	conf, err := LoadFile("testdata/conf.victorops-default-apikey-file.yml")
+	if err != nil {
+		t.Fatalf("Error parsing %s: %s", "testdata/conf.victorops-default-apikey-file.yml", err)
+	}
+
+	defaultKey := conf.Global.VictorOpsAPIKeyFile
+	overrideKey := "/override_file"
+	if defaultKey != conf.Receivers[0].VictorOpsConfigs[0].APIKeyFile {
+		t.Fatalf("Invalid VictorOps key_file: %s\nExpected: %s", conf.Receivers[0].VictorOpsConfigs[0].APIKeyFile, defaultKey)
+	}
+	if overrideKey != conf.Receivers[1].VictorOpsConfigs[0].APIKeyFile {
+		t.Errorf("Invalid VictorOps key_file: %s\nExpected: %s", conf.Receivers[0].VictorOpsConfigs[0].APIKeyFile, overrideKey)
+	}
+}
+
+func TestVictorOpsBothAPIKeyAndFile(t *testing.T) {
+	_, err := LoadFile("testdata/conf.victorops-both-file-and-apikey.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.victorops-both-file-and-apikey.yml", err)
+	}
+	if err.Error() != "at most one of victorops_api_key & victorops_api_key_file must be configured" {
+		t.Errorf("Expected: %s\nGot: %s", "at most one of victorops_api_key & victorops_api_key_file must be configured", err.Error())
 	}
 }
 
@@ -1020,7 +1068,7 @@ func TestOpsGenieDefaultAPIKey(t *testing.T) {
 		t.Fatalf("Error parsing %s: %s", "testdata/conf.opsgenie-default-apikey.yml", err)
 	}
 
-	var defaultKey = conf.Global.OpsGenieAPIKey
+	defaultKey := conf.Global.OpsGenieAPIKey
 	if defaultKey != conf.Receivers[0].OpsGenieConfigs[0].APIKey {
 		t.Fatalf("Invalid OpsGenie key: %s\nExpected: %s", conf.Receivers[0].OpsGenieConfigs[0].APIKey, defaultKey)
 	}
@@ -1035,7 +1083,7 @@ func TestOpsGenieDefaultAPIKeyFile(t *testing.T) {
 		t.Fatalf("Error parsing %s: %s", "testdata/conf.opsgenie-default-apikey-file.yml", err)
 	}
 
-	var defaultKey = conf.Global.OpsGenieAPIKeyFile
+	defaultKey := conf.Global.OpsGenieAPIKeyFile
 	if defaultKey != conf.Receivers[0].OpsGenieConfigs[0].APIKeyFile {
 		t.Fatalf("Invalid OpsGenie key_file: %s\nExpected: %s", conf.Receivers[0].OpsGenieConfigs[0].APIKeyFile, defaultKey)
 	}

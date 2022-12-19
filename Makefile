@@ -29,6 +29,10 @@ build-all: assets apiv2 build
 .PHONY: assets
 assets: asset/assets_vfsdata.go
 
+.PHONY: assets-tarball
+assets-tarball: ui/app/script.js ui/app/index.html
+	scripts/package_assets.sh
+
 asset/assets_vfsdata.go: ui/app/script.js ui/app/index.html ui/app/lib template/default.tmpl template/email.tmpl
 	GO111MODULE=$(GO111MODULE) $(GO) generate $(GOOPTS) ./asset
 	@$(GOFMT) -w ./asset
@@ -46,7 +50,7 @@ SWAGGER = docker run \
 	--user=$(shell id -u $(USER)):$(shell id -g $(USER)) \
 	--rm \
 	-v $(shell pwd):/go/src/github.com/prometheus/alertmanager \
-	-w /go/src/github.com/prometheus/alertmanager quay.io/goswagger/swagger:v0.24.0
+	-w /go/src/github.com/prometheus/alertmanager quay.io/goswagger/swagger:v0.30.3
 
 api/v2/models api/v2/restapi api/v2/client: api/v2/openapi.yaml
 	-rm -r api/v2/{client,models,restapi}

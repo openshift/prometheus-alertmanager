@@ -71,6 +71,8 @@ global:
   [ smtp_auth_username: <string> ]
   # SMTP Auth using LOGIN and PLAIN.
   [ smtp_auth_password: <secret> ]
+  # SMTP Auth using LOGIN and PLAIN.
+  [ smtp_auth_password_file: <string> ]
   # SMTP Auth using PLAIN.
   [ smtp_auth_identity: <string> ]
   # SMTP Auth using CRAM-MD5.
@@ -83,6 +85,7 @@ global:
   [ slack_api_url: <secret> ]
   [ slack_api_url_file: <filepath> ]
   [ victorops_api_key: <secret> ]
+  [ victorops_api_key_file: <filepath> ]
   [ victorops_api_url: <string> | default = "https://alert.victorops.com/integrations/generic/20131114/alert/" ]
   [ pagerduty_url: <string> | default = "https://events.pagerduty.com/v2/enqueue" ]
   [ opsgenie_api_key: <secret> ]
@@ -92,6 +95,7 @@ global:
   [ wechat_api_secret: <secret> ]
   [ wechat_api_corp_id: <string> ]
   [ telegram_api_url: <string> | default = "https://api.telegram.org" ]
+  [ webex_api_url: <string> | default = "https://webexapis.com/v1/messages" ]
   # The default HTTP client configuration
   [ http_config: <http_config> ]
 
@@ -283,17 +287,18 @@ supports the following fields:
   [ - <month_range> ...]
   years:
   [ - <year_range> ...]
+  location: <string>
 ```
 
 All fields are lists. Within each non-empty list, at least one element must be satisfied to match
 the field. If a field is left unspecified, any value will match the field. For an instant of time
 to match a complete time interval, all fields must match.
-Some fields support ranges and negative indices, and are detailed below. All definitions are
-taken to be in UTC, no other timezones are currently supported.
+Some fields support ranges and negative indices, and are detailed below. If a time zone is not
+specified, then the times are taken to be in UTC.
 
-`time_range` Ranges inclusive of the starting time and exclusive of the end time to
+`time_range`: Ranges inclusive of the starting time and exclusive of the end time to
 make it easy to represent times that start/end on hour boundaries.
-For example, start_time: '17:00' and end_time: '24:00' will begin at 17:00 and finish
+For example, `start_time: '17:00'` and `end_time: '24:00'` will begin at 17:00 and finish
 immediately before 24:00. They are specified like so:
 
         times:
@@ -302,7 +307,7 @@ immediately before 24:00. They are specified like so:
 
 `weekday_range`: A list of days of the week, where the week begins on Sunday and ends on Saturday.
 Days should be specified by name (e.g. 'Sunday'). For convenience, ranges are also accepted
-of the form <start_day>:<end_day> and are inclusive on both ends. For example:
+of the form `<start_day>:<end_day>` and are inclusive on both ends. For example:
 `['monday:wednesday','saturday', 'sunday']`
 
 `days_of_month_range`: A list of numerical days in the month. Days begin at 1.
@@ -318,6 +323,25 @@ Inclusive on both ends.
 
 `year_range`: A numerical list of years. Ranges are accepted. For example, `['2020:2022', '2030']`.
 Inclusive on both ends.
+
+`location`: A string that matches a location in the IANA time zone database. For
+example, `'Australia/Sydney'`. The location provides the time zone for the time
+interval. For example, a time interval with a location of `'Australia/Sydney'` that
+contained something like:
+
+        times:
+        - start_time: 09:00
+          end_time: 17:00
+        weekdays: ['monday:friday']
+
+would include any time that fell between the hours of 9:00AM and 5:00PM, between Monday
+and Friday, using the local time in Sydney, Australia.
+
+You may also use `'Local'` as a location to use the local time of the machine where
+Alertmanager is running, or `'UTC'` for UTC time. If no timezone is provided, the time
+interval is taken to be in UTC time.**Note:** On Windows, only `Local` or `UTC` are
+supported unless you provide a custom time zone database using the `ZONEINFO`
+environment variable.
 
 ## `<inhibit_rule>`
 
@@ -401,6 +425,9 @@ authorization:
 oauth2:
   [ <oauth2> ]
 
+# Whether to enable HTTP2.
+[ enable_http2: <bool> | default: true ]
+
 # Optional proxy URL.
 [ proxy_url: <string> ]
 
@@ -436,6 +463,13 @@ token_url: <string>
 # Optional parameters to append to the token URL.
 endpoint_params:
   [ <string>: <string> ... ]
+
+# Configures the token request's TLS settings.
+tls_config:
+  [ <tls_config> ]
+
+# Optional proxy URL.
+[ proxy_url: <string> ]
 ```
 
 ## `<tls_config>`
@@ -456,6 +490,17 @@ A `tls_config` allows configuring TLS connections.
 
 # Disable validation of the server certificate.
 [ insecure_skip_verify: <boolean> | default = false]
+
+# Minimum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
+# 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
+# If unset, Prometheus will use Go default minimum version, which is TLS 1.2.
+# See MinVersion in https://pkg.go.dev/crypto/tls#Config.
+[ min_version: <string> ]
+# Maximum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
+# 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
+# If unset, Prometheus will use Go default maximum version, which is TLS 1.3.
+# See MaxVersion in https://pkg.go.dev/crypto/tls#Config.
+[ max_version: <string> ]
 ```
 
 ## `<receiver>`
@@ -489,6 +534,8 @@ wechat_configs:
   [ - <wechat_config>, ... ]
 telegram_configs:
   [ - <telegram_config>, ... ]
+webex_configs:
+  [ - <webex_config>, ... ]
 ```
 
 ## `<email_config>`
@@ -510,8 +557,10 @@ to: <tmpl_string>
 [ hello: <string> | default = global.smtp_hello ]
 
 # SMTP authentication information.
+# auth_password and auth_password_file are mutually exclusive.
 [ auth_username: <string> | default = global.smtp_auth_username ]
 [ auth_password: <secret> | default = global.smtp_auth_password ]
+[ auth_password_file: <string> | default = global.smtp_auth_password_file ]
 [ auth_secret: <secret> | default = global.smtp_auth_secret ]
 [ auth_identity: <string> | default = global.smtp_auth_identity ]
 
@@ -599,7 +648,7 @@ responders:
 [ name: <tmpl_string> ]
 [ username: <tmpl_string> ]
 
-# "team", "teams, "user", "escalation" or "schedule".
+# "team", "teams", "user", "escalation" or "schedule".
 type: <tmpl_string>
 ```
 
@@ -612,11 +661,19 @@ PagerDuty provides [documentation](https://www.pagerduty.com/docs/guides/prometh
 # Whether to notify about resolved alerts.
 [ send_resolved: <boolean> | default = true ]
 
-# The following two options are mutually exclusive.
+# The routing and service keys are mutually exclusive.
 # The PagerDuty integration key (when using PagerDuty integration type `Events API v2`).
+# It is mutually exclusive with `routing_key_file`.
 routing_key: <tmpl_secret>
+# Read the Pager Duty routing key from a file.
+# It is mutually exclusive with `routing_key`.
+routing_key_file: <filepath>
 # The PagerDuty integration key (when using PagerDuty integration type `Prometheus`).
+# It is mutually exclusive with `service_key_file`.
 service_key: <tmpl_secret>
+# Read the Pager Duty service key from a file.
+# It is mutually exclusive with `service_key`.
+service_key_file: <filepath>
 
 # The URL to send API requests to
 [ url: <string> | default = global.pagerduty_url ]
@@ -631,6 +688,9 @@ service_key: <tmpl_secret>
 
 # Severity of the incident.
 [ severity: <tmpl_string> | default = 'error' ]
+
+# Unique location of the affected system.
+[ source: <tmpl_string> | default = client ]
 
 # A set of arbitrary key/value pairs that provide further detail
 # about the incident.
@@ -934,7 +994,12 @@ VictorOps notifications are sent out via the [VictorOps API](https://help.victor
 [ send_resolved: <boolean> | default = true ]
 
 # The API key to use when talking to the VictorOps API.
+# It is mutually exclusive with `api_key_file`.
 [ api_key: <secret> | default = global.victorops_api_key ]
+
+# Reads the API key to use when talking to the VictorOps API from a file.
+# It is mutually exclusive with `api_key`.
+[ api_key_file: <filepath> | default = global.victorops_api_key_file ]
 
 # The VictorOps API URL.
 [ api_url: <string> | default = global.victorops_api_url ]
@@ -1065,5 +1130,24 @@ API](http://admin.wechat.com/wiki/index.php?title=Customer_Service_Messages).
 [ parse_mode: <string> | default = "MarkdownV2" ]
 
 # The HTTP client's configuration.
+[ http_config: <http_config> | default = global.http_config ]
+```
+
+## `<webex_config>`
+```yaml
+# Whether to notify about resolved alerts.
+[ send_resolved: <boolean> | default = true ]
+
+# The Webex Teams API URL i.e. https://webexapis.com/v1/messages
+# If not specified, default API URL will be used.
+[ api_url: <string> | default = global.webex_api_url ]
+
+# ID of the Webex Teams room where to send the messages.
+room_id: <string>
+
+# Message template
+[ message: <tmpl_string> default = '{{ template "webex.default.message" .}}' ]
+
+# The HTTP client's configuration. You must use this configuration to supply the bot token as part of the HTTP `Authorization` header. 
 [ http_config: <http_config> | default = global.http_config ]
 ```

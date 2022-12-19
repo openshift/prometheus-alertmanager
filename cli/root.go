@@ -24,7 +24,7 @@ import (
 	promconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/version"
 	"golang.org/x/mod/semver"
-	kingpin "gopkg.in/alecthomas/kingpin.v2"
+	"gopkg.in/alecthomas/kingpin.v2"
 
 	"github.com/prometheus/alertmanager/api/v2/client"
 	"github.com/prometheus/alertmanager/cli/config"
@@ -70,7 +70,7 @@ const (
 )
 
 // NewAlertmanagerClient initializes an alertmanager client with the given URL
-func NewAlertmanagerClient(amURL *url.URL) *client.Alertmanager {
+func NewAlertmanagerClient(amURL *url.URL) *client.AlertmanagerAPI {
 	address := defaultAmHost + ":" + defaultAmPort
 	schemes := []string{"http"}
 
@@ -94,7 +94,7 @@ func NewAlertmanagerClient(amURL *url.URL) *client.Alertmanager {
 
 	if httpConfigFile != "" {
 		var err error
-		httpConfig, err := config.LoadHTTPConfigFile(httpConfigFile)
+		httpConfig, _, err := promconfig.LoadHTTPConfigFile(httpConfigFile)
 		if err != nil {
 			kingpin.Fatalf("failed to load HTTP config file: %v", err)
 		}
@@ -127,9 +127,7 @@ func NewAlertmanagerClient(amURL *url.URL) *client.Alertmanager {
 
 // Execute is the main function for the amtool command
 func Execute() {
-	var (
-		app = kingpin.New("amtool", helpRoot).UsageWriter(os.Stdout)
-	)
+	app := kingpin.New("amtool", helpRoot).UsageWriter(os.Stdout)
 
 	format.InitFormatFlags(app)
 
