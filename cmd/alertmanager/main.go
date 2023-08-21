@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
@@ -40,7 +41,6 @@ import (
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/exporter-toolkit/web"
 	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
-	"gopkg.in/alecthomas/kingpin.v2"
 
 	"github.com/prometheus/alertmanager/api"
 	"github.com/prometheus/alertmanager/cluster"
@@ -51,6 +51,7 @@ import (
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/discord"
 	"github.com/prometheus/alertmanager/notify/email"
+	"github.com/prometheus/alertmanager/notify/msteams"
 	"github.com/prometheus/alertmanager/notify/opsgenie"
 	"github.com/prometheus/alertmanager/notify/pagerduty"
 	"github.com/prometheus/alertmanager/notify/pushover"
@@ -131,7 +132,7 @@ const defaultClusterAddr = "0.0.0.0:9094"
 
 // buildReceiverIntegrations builds a list of integration notifiers off of a
 // receiver config.
-func buildReceiverIntegrations(nc *config.Receiver, tmpl *template.Template, logger log.Logger) ([]notify.Integration, error) {
+func buildReceiverIntegrations(nc config.Receiver, tmpl *template.Template, logger log.Logger) ([]notify.Integration, error) {
 	var (
 		errs         types.MultiError
 		integrations []notify.Integration
@@ -181,6 +182,9 @@ func buildReceiverIntegrations(nc *config.Receiver, tmpl *template.Template, log
 	for i, c := range nc.WebexConfigs {
 		add("webex", i, c, func(l log.Logger) (notify.Notifier, error) { return webex.New(c, tmpl, l) })
 	}
+	for i, c := range nc.MSTeamsConfigs {
+		add("msteams", i, c, func(l log.Logger) (notify.Notifier, error) { return msteams.New(c, tmpl, l) })
+	}
 
 	if errs.Len() > 0 {
 		return nil, &errs
@@ -226,6 +230,7 @@ func run() int {
 		peerReconnectTimeout   = kingpin.Flag("cluster.reconnect-timeout", "Length of time to attempt to reconnect to a lost peer.").Default(cluster.DefaultReconnectTimeout.String()).Duration()
 		tlsConfigFile          = kingpin.Flag("cluster.tls-config", "[EXPERIMENTAL] Path to config yaml file that can enable mutual TLS within the gossip protocol.").Default("").String()
 		allowInsecureAdvertise = kingpin.Flag("cluster.allow-insecure-public-advertise-address-discovery", "[EXPERIMENTAL] Allow alertmanager to discover and listen on a public IP address.").Bool()
+		label                  = kingpin.Flag("cluster.label", "The cluster label is an optional string to include on each packet and stream. It uniquely identifies the cluster and prevents cross-communication issues when sending gossip messages.").Default("").String()
 	)
 
 	promlogflag.AddFlags(kingpin.CommandLine, &promlogConfig)
@@ -267,6 +272,7 @@ func run() int {
 			*probeInterval,
 			tlsTransportConfig,
 			*allowInsecureAdvertise,
+			*label,
 		)
 		if err != nil {
 			level.Error(logger).Log("msg", "unable to initialize gossip mesh", "err", err)
@@ -277,17 +283,15 @@ func run() int {
 
 	stopc := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
 
-	notificationLogOpts := []nflog.Option{
-		nflog.WithRetention(*retention),
-		nflog.WithSnapshot(filepath.Join(*dataDir, "nflog")),
-		nflog.WithMaintenance(*maintenanceInterval, stopc, wg.Done, nil),
-		nflog.WithMetrics(prometheus.DefaultRegisterer),
-		nflog.WithLogger(log.With(logger, "component", "nflog")),
+	notificationLogOpts := nflog.Options{
+		SnapshotFile: filepath.Join(*dataDir, "nflog"),
+		Retention:    *retention,
+		Logger:       log.With(logger, "component", "nflog"),
+		Metrics:      prometheus.DefaultRegisterer,
 	}
 
-	notificationLog, err := nflog.New(notificationLogOpts...)
+	notificationLog, err := nflog.New(notificationLogOpts)
 	if err != nil {
 		level.Error(logger).Log("err", err)
 		return 1
@@ -296,6 +300,12 @@ func run() int {
 		c := peer.AddState("nfl", notificationLog, prometheus.DefaultRegisterer)
 		notificationLog.SetBroadcast(c.Broadcast)
 	}
+
+	wg.Add(1)
+	go func() {
+		notificationLog.Maintenance(*maintenanceInterval, filepath.Join(*dataDir, "nflog"), stopc, nil)
+		wg.Done()
+	}()
 
 	marker := types.NewMarker(prometheus.DefaultRegisterer)
 
@@ -419,7 +429,7 @@ func run() int {
 		configLogger,
 	)
 	configCoordinator.Subscribe(func(conf *config.Config) error {
-		tmpl, err = template.FromGlobs(conf.Templates...)
+		tmpl, err = template.FromGlobs(conf.Templates)
 		if err != nil {
 			return errors.Wrap(err, "failed to parse templates")
 		}
@@ -505,6 +515,19 @@ func run() int {
 					r.Key(),
 				)
 			}
+
+			if r.RouteOpts.RepeatInterval < r.RouteOpts.GroupInterval {
+				level.Warn(configLogger).Log(
+					"msg",
+					"repeat_interval is less than group_interval. Notifications will not repeat until the next group_interval.",
+					"repeat_interval",
+					r.RouteOpts.RepeatInterval,
+					"group_interval",
+					r.RouteOpts.GroupInterval,
+					"route",
+					r.Key(),
+				)
+			}
 		})
 
 		go disp.Run()
@@ -554,31 +577,19 @@ func run() int {
 	}()
 
 	var (
-		hup      = make(chan os.Signal, 1)
-		hupReady = make(chan bool)
-		term     = make(chan os.Signal, 1)
+		hup  = make(chan os.Signal, 1)
+		term = make(chan os.Signal, 1)
 	)
 	signal.Notify(hup, syscall.SIGHUP)
 	signal.Notify(term, os.Interrupt, syscall.SIGTERM)
 
-	go func() {
-		<-hupReady
-		for {
-			select {
-			case <-hup:
-				// ignore error, already logged in `reload()`
-				_ = configCoordinator.Reload()
-			case errc := <-webReload:
-				errc <- configCoordinator.Reload()
-			}
-		}
-	}()
-
-	// Wait for reload or termination signals.
-	close(hupReady) // Unblock SIGHUP handler.
-
 	for {
 		select {
+		case <-hup:
+			// ignore error, already logged in `reload()`
+			_ = configCoordinator.Reload()
+		case errc := <-webReload:
+			errc <- configCoordinator.Reload()
 		case <-term:
 			level.Info(logger).Log("msg", "Received SIGTERM, exiting gracefully...")
 			return 0
