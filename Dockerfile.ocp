@@ -2,7 +2,7 @@
 FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21-openshift-4.16 AS builder
 WORKDIR /go/src/github.com/prometheus/alertmanager
 COPY . .
-RUN if yum install -y prometheus-promu; then export BUILD_PROMU=false; fi && make build
+RUN if yum install -y prometheus-promu; then export BUILD_PROMU=false; fi && make common-build
 
 FROM registry.ci.openshift.org/ocp/4.16:base-rhel9
 LABEL io.k8s.display-name="OpenShift Prometheus Alert Manager" \
