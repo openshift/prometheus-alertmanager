@@ -19,3 +19,4 @@
 !/.travis.yml
 !/.promu.yml
 !/api/v2/openapi.yaml
+!.github/workflows/*.yml

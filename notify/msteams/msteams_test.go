@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"testing"
 	"time"
 
@@ -77,8 +78,9 @@ func TestMSTeamsTemplating(t *testing.T) {
 		{
 			title: "full-blown message",
 			cfg: &config.MSTeamsConfig{
-				Title: `{{ template "msteams.default.title" . }}`,
-				Text:  `{{ template "msteams.default.text" . }}`,
+				Title:   `{{ template "msteams.default.title" . }}`,
+				Summary: `{{ template "msteams.default.summary" . }}`,
+				Text:    `{{ template "msteams.default.text" . }}`,
 			},
 			retry: false,
 		},
@@ -90,10 +92,19 @@ func TestMSTeamsTemplating(t *testing.T) {
 			errMsg: "template: :1: unclosed action",
 		},
 		{
+			title: "summary with templating errors",
+			cfg: &config.MSTeamsConfig{
+				Title:   `{{ template "msteams.default.title" . }}`,
+				Summary: "{{ ",
+			},
+			errMsg: "template: :1: unclosed action",
+		},
+		{
 			title: "message with templating errors",
 			cfg: &config.MSTeamsConfig{
-				Title: `{{ template "msteams.default.title" . }}`,
-				Text:  "{{ ",
+				Title:   `{{ template "msteams.default.title" . }}`,
+				Summary: `{{ template "msteams.default.summary" . }}`,
+				Text:    "{{ ",
 			},
 			errMsg: "template: :1: unclosed action",
 		},
@@ -175,10 +186,50 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 			if tt.noError {
 				require.NoError(t, err)
 			} else {
-				reasonError, ok := err.(*notify.ErrorWithReason)
-				require.True(t, ok)
+				var reasonError *notify.ErrorWithReason
+				require.ErrorAs(t, err, &reasonError)
 				require.Equal(t, tt.expectedReason, reasonError.Reason)
 			}
 		})
 	}
+}
+
+func TestMSTeamsRedactedURL(t *testing.T) {
+	ctx, u, fn := test.GetContextWithCancelingURL()
+	defer fn()
+
+	secret := "secret"
+	notifier, err := New(
+		&config.MSTeamsConfig{
+			WebhookURL: &config.SecretURL{URL: u},
+			HTTPConfig: &commoncfg.HTTPClientConfig{},
+		},
+		test.CreateTmpl(t),
+		log.NewNopLogger(),
+	)
+	require.NoError(t, err)
+
+	test.AssertNotifyLeaksNoSecret(ctx, t, notifier, secret)
+}
+
+func TestMSTeamsReadingURLFromFile(t *testing.T) {
+	ctx, u, fn := test.GetContextWithCancelingURL()
+	defer fn()
+
+	f, err := os.CreateTemp("", "webhook_url")
+	require.NoError(t, err, "creating temp file failed")
+	_, err = f.WriteString(u.String() + "\n")
+	require.NoError(t, err, "writing to temp file failed")
+
+	notifier, err := New(
+		&config.MSTeamsConfig{
+			WebhookURLFile: f.Name(),
+			HTTPConfig:     &commoncfg.HTTPClientConfig{},
+		},
+		test.CreateTmpl(t),
+		log.NewNopLogger(),
+	)
+	require.NoError(t, err)
+
+	test.AssertNotifyLeaksNoSecret(ctx, t, notifier, u.String())
 }
