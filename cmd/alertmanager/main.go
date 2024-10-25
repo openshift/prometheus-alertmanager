@@ -29,10 +29,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/promlog"
@@ -41,6 +43,7 @@ import (
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/exporter-toolkit/web"
 	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
+	"go.uber.org/automaxprocs/maxprocs"
 
 	"github.com/prometheus/alertmanager/api"
 	"github.com/prometheus/alertmanager/cluster"
@@ -49,7 +52,7 @@ import (
 	"github.com/prometheus/alertmanager/dispatch"
 	"github.com/prometheus/alertmanager/featurecontrol"
 	"github.com/prometheus/alertmanager/inhibit"
-	"github.com/prometheus/alertmanager/matchers/compat"
+	"github.com/prometheus/alertmanager/matcher/compat"
 	"github.com/prometheus/alertmanager/nflog"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/provider/mem"
@@ -64,9 +67,12 @@ import (
 var (
 	requestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "alertmanager_http_request_duration_seconds",
-			Help:    "Histogram of latencies for HTTP requests.",
-			Buckets: []float64{.05, 0.1, .25, .5, .75, 1, 2, 5, 20, 60},
+			Name:                            "alertmanager_http_request_duration_seconds",
+			Help:                            "Histogram of latencies for HTTP requests.",
+			Buckets:                         []float64{.05, 0.1, .25, .5, .75, 1, 2, 5, 20, 60},
+			NativeHistogramBucketFactor:     1.1,
+			NativeHistogramMaxBucketNumber:  100,
+			NativeHistogramMinResetDuration: 1 * time.Hour,
 		},
 		[]string{"handler", "method"},
 	)
@@ -111,7 +117,7 @@ func init() {
 	prometheus.MustRegister(configuredReceivers)
 	prometheus.MustRegister(configuredIntegrations)
 	prometheus.MustRegister(configuredInhibitionRules)
-	prometheus.MustRegister(version.NewCollector("alertmanager"))
+	prometheus.MustRegister(collectors.NewBuildInfoCollector())
 }
 
 func instrumentHandler(handlerName string, handler http.HandlerFunc) http.HandlerFunc {
@@ -142,6 +148,8 @@ func run() int {
 		dataDir             = kingpin.Flag("storage.path", "Base path for data storage.").Default("data/").String()
 		retention           = kingpin.Flag("data.retention", "How long to keep data for.").Default("120h").Duration()
 		maintenanceInterval = kingpin.Flag("data.maintenance-interval", "Interval between garbage collection and snapshotting to disk of the silences and the notification logs.").Default("15m").Duration()
+		maxSilences         = kingpin.Flag("silences.max-silences", "Maximum number of silences, including expired silences. If negative or zero, no limit is set.").Default("0").Int()
+		maxSilenceSizeBytes = kingpin.Flag("silences.max-silence-size-bytes", "Maximum silence size in bytes. If negative or zero, no limit is set.").Default("0").Int()
 		alertGCInterval     = kingpin.Flag("alerts.gc-interval", "Interval between alert GC.").Default("30m").Duration()
 
 		webConfig      = webflag.AddFlags(kingpin.CommandLine, ":9093")
@@ -149,6 +157,9 @@ func run() int {
 		routePrefix    = kingpin.Flag("web.route-prefix", "Prefix for the internal routes of web endpoints. Defaults to path of --web.external-url.").String()
 		getConcurrency = kingpin.Flag("web.get-concurrency", "Maximum number of GET requests processed concurrently. If negative or zero, the limit is GOMAXPROC or 8, whichever is larger.").Default("0").Int()
 		httpTimeout    = kingpin.Flag("web.timeout", "Timeout for HTTP requests. If negative or zero, no timeout is set.").Default("0").Duration()
+
+		memlimitRatio = kingpin.Flag("auto-gomemlimit.ratio", "The ratio of reserved GOMEMLIMIT memory to the detected maximum container or system memory. The value must be greater than 0 and less than or equal to 1.").
+				Default("0.9").Float64()
 
 		clusterBindAddr = kingpin.Flag("cluster.listen-address", "Listen address for cluster. Set to empty string to disable HA mode.").
 				Default(defaultClusterAddr).String()
@@ -187,6 +198,34 @@ func run() int {
 		return 1
 	}
 	compat.InitFromFlags(logger, ff)
+
+	if ff.EnableAutoGOMEMLIMIT() {
+		if *memlimitRatio <= 0.0 || *memlimitRatio > 1.0 {
+			level.Error(logger).Log("msg", "--auto-gomemlimit.ratio must be greater than 0 and less than or equal to 1.")
+			return 1
+		}
+
+		if _, err := memlimit.SetGoMemLimitWithOpts(
+			memlimit.WithRatio(*memlimitRatio),
+			memlimit.WithProvider(
+				memlimit.ApplyFallback(
+					memlimit.FromCgroup,
+					memlimit.FromSystem,
+				),
+			),
+		); err != nil {
+			level.Warn(logger).Log("component", "automemlimit", "msg", "Failed to set GOMEMLIMIT automatically", "err", err)
+		}
+	}
+
+	if ff.EnableAutoGOMAXPROCS() {
+		l := func(format string, a ...interface{}) {
+			level.Info(logger).Log("component", "automaxprocs", "msg", fmt.Sprintf(strings.TrimPrefix(format, "maxprocs: "), a...))
+		}
+		if _, err := maxprocs.Set(maxprocs.Logger(l)); err != nil {
+			level.Warn(logger).Log("msg", "Failed to set GOMAXPROCS automatically", "err", err)
+		}
+	}
 
 	err = os.MkdirAll(*dataDir, 0o777)
 	if err != nil {
@@ -255,8 +294,12 @@ func run() int {
 	silenceOpts := silence.Options{
 		SnapshotFile: filepath.Join(*dataDir, "silences"),
 		Retention:    *retention,
-		Logger:       log.With(logger, "component", "silences"),
-		Metrics:      prometheus.DefaultRegisterer,
+		Limits: silence.Limits{
+			MaxSilences:         func() int { return *maxSilences },
+			MaxSilenceSizeBytes: func() int { return *maxSilenceSizeBytes },
+		},
+		Logger:  log.With(logger, "component", "silences"),
+		Metrics: prometheus.DefaultRegisterer,
 	}
 
 	silences, err := silence.New(silenceOpts)
@@ -325,15 +368,16 @@ func run() int {
 	}
 
 	api, err := api.New(api.Options{
-		Alerts:      alerts,
-		Silences:    silences,
-		StatusFunc:  marker.Status,
-		Peer:        clusterPeer,
-		Timeout:     *httpTimeout,
-		Concurrency: *getConcurrency,
-		Logger:      log.With(logger, "component", "api"),
-		Registry:    prometheus.DefaultRegisterer,
-		GroupFunc:   groupFn,
+		Alerts:          alerts,
+		Silences:        silences,
+		AlertStatusFunc: marker.Status,
+		GroupMutedFunc:  marker.Muted,
+		Peer:            clusterPeer,
+		Timeout:         *httpTimeout,
+		Concurrency:     *getConcurrency,
+		Logger:          log.With(logger, "component", "api"),
+		Registry:        prometheus.DefaultRegisterer,
+		GroupFunc:       groupFn,
 	})
 	if err != nil {
 		level.Error(logger).Log("err", fmt.Errorf("failed to create API: %w", err))
@@ -435,6 +479,7 @@ func run() int {
 			inhibitor,
 			silencer,
 			intervener,
+			marker,
 			notificationLog,
 			pipelinePeer,
 		)
