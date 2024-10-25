@@ -45,7 +45,7 @@ import (
 	"github.com/prometheus/alertmanager/cluster"
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/dispatch"
-	"github.com/prometheus/alertmanager/matchers/compat"
+	"github.com/prometheus/alertmanager/matcher/compat"
 	"github.com/prometheus/alertmanager/pkg/labels"
 	"github.com/prometheus/alertmanager/provider"
 	"github.com/prometheus/alertmanager/silence"
@@ -53,13 +53,14 @@ import (
 	"github.com/prometheus/alertmanager/types"
 )
 
-// API represents an Alertmanager API v2
+// API represents an Alertmanager API v2.
 type API struct {
 	peer           cluster.ClusterPeer
 	silences       *silence.Silences
 	alerts         provider.Alerts
 	alertGroups    groupsFn
 	getAlertStatus getAlertStatusFn
+	groupMutedFunc groupMutedFunc
 	uptime         time.Time
 
 	// mtx protects alertmanagerConfig, setAlertStatus and route.
@@ -78,15 +79,17 @@ type API struct {
 
 type (
 	groupsFn         func(func(*dispatch.Route) bool, func(*types.Alert, time.Time) bool) (dispatch.AlertGroups, map[prometheus_model.Fingerprint][]string)
+	groupMutedFunc   func(routeID, groupKey string) ([]string, bool)
 	getAlertStatusFn func(prometheus_model.Fingerprint) types.AlertStatus
 	setAlertStatusFn func(prometheus_model.LabelSet)
 )
 
-// NewAPI returns a new Alertmanager API v2
+// NewAPI returns a new Alertmanager API v2.
 func NewAPI(
 	alerts provider.Alerts,
 	gf groupsFn,
-	sf getAlertStatusFn,
+	asf getAlertStatusFn,
+	gmf groupMutedFunc,
 	silences *silence.Silences,
 	peer cluster.ClusterPeer,
 	l log.Logger,
@@ -94,8 +97,9 @@ func NewAPI(
 ) (*API, error) {
 	api := API{
 		alerts:         alerts,
-		getAlertStatus: sf,
+		getAlertStatus: asf,
 		alertGroups:    gf,
+		groupMutedFunc: gmf,
 		peer:           peer,
 		silences:       silences,
 		logger:         l,
@@ -290,7 +294,7 @@ func (api *API) getAlertsHandler(params alert_ops.GetAlertsParams) middleware.Re
 			continue
 		}
 
-		alert := AlertToOpenAPIAlert(a, api.getAlertStatus(a.Fingerprint()), receivers)
+		alert := AlertToOpenAPIAlert(a, api.getAlertStatus(a.Fingerprint()), receivers, nil)
 
 		res = append(res, alert)
 	}
@@ -407,6 +411,11 @@ func (api *API) getAlertGroupsHandler(params alertgroup_ops.GetAlertGroupsParams
 	res := make(open_api_models.AlertGroups, 0, len(alertGroups))
 
 	for _, alertGroup := range alertGroups {
+		mutedBy, isMuted := api.groupMutedFunc(alertGroup.RouteID, alertGroup.GroupKey)
+		if !*params.Muted && isMuted {
+			continue
+		}
+
 		ag := &open_api_models.AlertGroup{
 			Receiver: &open_api_models.Receiver{Name: &alertGroup.Receiver},
 			Labels:   ModelLabelSetToAPILabelSet(alertGroup.Labels),
@@ -417,7 +426,7 @@ func (api *API) getAlertGroupsHandler(params alertgroup_ops.GetAlertGroupsParams
 			fp := alert.Fingerprint()
 			receivers := allReceivers[fp]
 			status := api.getAlertStatus(fp)
-			apiAlert := AlertToOpenAPIAlert(alert, status, receivers)
+			apiAlert := AlertToOpenAPIAlert(alert, status, receivers, mutedBy)
 			ag.Alerts = append(ag.Alerts, apiAlert)
 		}
 		res = append(res, ag)
@@ -545,9 +554,9 @@ var silenceStateOrder = map[types.SilenceState]int{
 
 // SortSilences sorts first according to the state "active, pending, expired"
 // then by end time or start time depending on the state.
-// active silences should show the next to expire first
+// Active silences should show the next to expire first
 // pending silences are ordered based on which one starts next
-// expired are ordered based on which one expired most recently
+// expired are ordered based on which one expired most recently.
 func SortSilences(sils open_api_models.GettableSilences) {
 	sort.Slice(sils, func(i, j int) bool {
 		state1 := types.SilenceState(*sils[i].Status.State)
@@ -660,8 +669,7 @@ func (api *API) postSilencesHandler(params silence_ops.PostSilencesParams) middl
 		return silence_ops.NewPostSilencesBadRequest().WithPayload(msg)
 	}
 
-	sid, err := api.silences.Set(sil)
-	if err != nil {
+	if err = api.silences.Set(sil); err != nil {
 		level.Error(logger).Log("msg", "Failed to create silence", "err", err)
 		if errors.Is(err, silence.ErrNotFound) {
 			return silence_ops.NewPostSilencesNotFound().WithPayload(err.Error())
@@ -670,7 +678,7 @@ func (api *API) postSilencesHandler(params silence_ops.PostSilencesParams) middl
 	}
 
 	return silence_ops.NewPostSilencesOK().WithPayload(&silence_ops.PostSilencesOKBody{
-		SilenceID: sid,
+		SilenceID: sil.Id,
 	})
 }
 

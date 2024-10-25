@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/benbjohnson/clock"
+	"github.com/coder/quartz"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/matttproud/golang_protobuf_extensions/pbutil"
@@ -46,7 +46,7 @@ var ErrInvalidState = errors.New("invalid state")
 // query currently allows filtering by and/or receiver group key.
 // It is configured via QueryParameter functions.
 //
-// TODO(fabxc): Future versions could allow querying a certain receiver
+// TODO(fabxc): Future versions could allow querying a certain receiver,
 // group or a given time interval.
 type query struct {
 	recv     *pb.Receiver
@@ -76,7 +76,7 @@ func QGroupKey(gk string) QueryParam {
 
 // Log holds the notification log state for alerts that have been notified.
 type Log struct {
-	clock clock.Clock
+	clock quartz.Clock
 
 	logger    log.Logger
 	metrics   *metrics
@@ -139,8 +139,12 @@ func newMetrics(r prometheus.Registerer) *metrics {
 		Help: "Number notification log received queries that failed.",
 	})
 	m.queryDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name: "alertmanager_nflog_query_duration_seconds",
-		Help: "Duration of notification log query evaluation.",
+		Name:                            "alertmanager_nflog_query_duration_seconds",
+		Help:                            "Duration of notification log query evaluation.",
+		Buckets:                         prometheus.DefBuckets,
+		NativeHistogramBucketFactor:     1.1,
+		NativeHistogramMaxBucketNumber:  100,
+		NativeHistogramMinResetDuration: 1 * time.Hour,
 	})
 	m.propagatedMessagesTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "alertmanager_nflog_gossip_messages_propagated_total",
@@ -255,7 +259,7 @@ func New(o Options) (*Log, error) {
 	}
 
 	l := &Log{
-		clock:     clock.New(),
+		clock:     quartz.NewReal(),
 		retention: o.Retention,
 		logger:    log.NewNopLogger(),
 		st:        state{},
@@ -301,7 +305,7 @@ func (l *Log) Maintenance(interval time.Duration, snapf string, stopc <-chan str
 		level.Error(l.logger).Log("msg", "interval or stop signal are missing - not running maintenance")
 		return
 	}
-	t := l.clock.Ticker(interval)
+	t := l.clock.NewTicker(interval)
 	defer t.Stop()
 
 	var doMaintenance MaintenanceFunc
