@@ -22,6 +22,17 @@ is not well-formed, the changes will not be applied and an error is logged.
 A configuration reload is triggered by sending a `SIGHUP` to the process or
 sending an HTTP POST request to the `/-/reload` endpoint.
 
+## Limits
+
+Alertmanager supports a number of configurable limits via command-line flags.
+
+To limit the maximum number of silences, including expired ones,
+use the `--silences.max-silences` flag.
+You can limit the maximum size of individual silences with `--silences.max-per-silence-bytes`,
+where the unit is in bytes.
+
+Both limits are disabled by default.
+
 ## Configuration file introduction
 
 To specify which configuration file to load, use the `--config.file` flag.
@@ -83,6 +94,11 @@ global:
   # The default SMTP TLS requirement.
   # Note that Go does not support unencrypted connections to remote SMTP endpoints.
   [ smtp_require_tls: <bool> | default = true ]
+  # The default TLS configuration for SMTP receivers
+  [ smtp_tls_config: <tls_config> ]
+
+  # Default settings for the JIRA integration.
+  [ jira_api_url: <string> ]
 
   # The API URL to use for Slack notifications.
   [ slack_api_url: <secret> ]
@@ -94,6 +110,11 @@ global:
   [ opsgenie_api_key: <secret> ]
   [ opsgenie_api_key_file: <filepath> ]
   [ opsgenie_api_url: <string> | default = "https://api.opsgenie.com/" ]
+  [ rocketchat_api_url: <string> | default = "https://open.rocket.chat/" ]
+  [ rocketchat_token: <secret> ]
+  [ rocketchat_token_file: <filepath> ]
+  [ rocketchat_token_id: <secret> ]
+  [ rocketchat_token_id_file: <filepath> ]
   [ wechat_api_url: <string> | default = "https://qyapi.weixin.qq.com/cgi-bin/" ]
   [ wechat_api_secret: <secret> ]
   [ wechat_api_corp_id: <string> ]
@@ -206,7 +227,7 @@ matchers:
 [ repeat_interval: <duration> | default = 4h ]
 
 # Times when the route should be muted. These must match the name of a
-# mute time interval defined in the mute_time_intervals section.
+# time interval defined in the time_intervals section.
 # Additionally, the root node cannot have any mute times.
 # When a route is muted it will not send any notifications, but
 # otherwise acts normally (including ending the route-matching process
@@ -443,13 +464,17 @@ Alertmanager runs in a special mode called fallback mode as its default mode. As
 
 In fallback mode, configurations are first parsed as UTF-8 matchers, and if incompatible with the UTF-8 parser, are then parsed as classic matchers. If your Alertmanager configuration contains matchers that are incompatible with the UTF-8 parser, Alertmanager will parse them as classic matchers and log a warning. This warning also includes a suggestion on how to change the matchers from classic matchers to UTF-8 matchers. For example:
 
-> ts=2024-02-11T10:00:00Z caller=parse.go:176 level=warn msg="Alertmanager is moving to a new parser for labels and matchers, and this input is incompatible. Alertmanager has instead parsed the input using the classic matchers parser as a fallback. To make this input compatible with the UTF-8 matchers parser please make sure all regular expressions and values are double-quoted. If you are still seeing this message please open an issue." input="foo=" origin=config err="end of input: expected label value" suggestion="foo=\"\""
+```
+ts=2024-02-11T10:00:00Z caller=parse.go:176 level=warn msg="Alertmanager is moving to a new parser for labels and matchers, and this input is incompatible. Alertmanager has instead parsed the input using the classic matchers parser as a fallback. To make this input compatible with the UTF-8 matchers parser please make sure all regular expressions and values are double-quoted. If you are still seeing this message please open an issue." input="foo=" origin=config err="end of input: expected label value" suggestion="foo=\"\""
+```
 
 Here the matcher `foo=` can be made into a valid UTF-8 matcher by double quoting the right hand side of the expression to give `foo=""`. These two matchers are equivalent, however with UTF-8 matchers the right hand side of the matcher is a required field.
 
 In rare cases, a configuration can cause disagreement between the UTF-8 and classic parser. This happens when a matcher is valid in both parsers, but due to added support for UTF-8, results in different parsings depending on which parser is used. If your Alertmanager configuration has disagreement, Alertmanager will use the classic parser and log a warning. For example:
 
-> ts=2024-02-11T10:00:00Z caller=parse.go:183 level=warn msg="Matchers input has disagreement" input="qux=\"\\xf0\\x9f\\x99\\x82\"\n" origin=config
+```
+ts=2024-02-11T10:00:00Z caller=parse.go:183 level=warn msg="Matchers input has disagreement" input="qux=\"\\xf0\\x9f\\x99\\x82\"\n" origin=config
+```
 
 Any occurrences of disagreement should be looked at on a case by case basis as depending on the nature of the disagreement, the configuration might not need updating before enabling UTF-8 strict mode. For example `\xf0\x9f\x99\x82` is the byte sequence for the 🙂 emoji. If the intention is to match a literal 🙂 emoji then no change is required. However, if the intention is to match the literal `\xf0\x9f\x99\x82` then the matcher should be changed to `qux="\\xf0\\x9f\\x99\\x82"`.
 
@@ -457,11 +482,15 @@ Any occurrences of disagreement should be looked at on a case by case basis as d
 
 In UTF-8 strict mode, Alertmanager disables support for classic matchers:
 
-> alertmanager --config.file=config.yml --enable-feature="utf8-strict-mode"
+```
+alertmanager --config.file=config.yml --enable-feature="utf8-strict-mode"
+```
 
 This mode should be enabled for new Alertmanager installations, and existing Alertmanager installations once all warnings of incompatible matchers have been resolved. Alertmanager will not start in UTF-8 strict mode until all the warnings of incompatible matchers have been resolved:
 
-> ts=2024-02-11T10:00:00Z caller=coordinator.go:118 level=error component=configuration msg="Loading configuration file failed" file=config.yml err="end of input: expected label value"
+```
+ts=2024-02-11T10:00:00Z caller=coordinator.go:118 level=error component=configuration msg="Loading configuration file failed" file=config.yml err="end of input: expected label value"
+```
 
 UTF-8 strict mode will be the default mode of Alertmanager at the end of the transition period.
 
@@ -479,7 +508,7 @@ You can use this mode if you suspect there is an issue with fallback mode or UTF
 
 You can use `amtool` to validate that an Alertmanager configuration file is compatible with UTF-8 strict mode before enabling it in Alertmanager server. You do not need a running Alertmanager server to do this.
 
-Just like Alertmanager server, `amtool` will log a warning if the configuration is incompatible or contains disagreement: 
+Just like Alertmanager server, `amtool` will log a warning if the configuration is incompatible or contains disagreement:
 
 ```
 amtool check-config config.yml
@@ -495,7 +524,7 @@ Found:
  - 0 templates
 ```
 
-You will know if a configuration is compatible with UTF-8 strict mode when no warnings are logged in `amtool`: 
+You will know if a configuration is compatible with UTF-8 strict mode when no warnings are logged in `amtool`:
 
 ```
 amtool check-config config.yml
@@ -636,7 +665,7 @@ Here are some more examples:
     ```
 
    As shown below, in the short-form, it's better to use double quotes to avoid problems with special characters like commas:
-   
+
    ```yaml
    matchers: [ "foo = \"bar,baz\"", "dings != bums" ]
    ```
@@ -676,12 +705,18 @@ email_configs:
   [ - <email_config>, ... ]
 msteams_configs:
   [ - <msteams_config>, ... ]
+msteamsv2_configs:
+  [ - <msteamsv2_config>, ... ]
+jira_configs:
+  [ - <jira_config>, ... ]
 opsgenie_configs:
   [ - <opsgenie_config>, ... ]
 pagerduty_configs:
   [ - <pagerduty_config>, ... ]
 pushover_configs:
   [ - <pushover_config>, ... ]
+rocket_configs:
+  [ - <rocketchat_config>, ... ]
 slack_configs:
   [ - <slack_config>, ... ]
 sns_configs:
@@ -848,6 +883,15 @@ webhook_url_file: <filepath>
 # Message body template.
 [ message: <tmpl_string> | default = '{{ template "discord.default.message" . }}' ]
 
+# Message content template. Limited to 2000 characters.
+[ content: <tmpl_string> | default = '{{ template "discord.default.content" . }}' ]
+
+# Message username.
+[ username: <string> | default = '' ]
+
+# Message avatar URL.
+[ avatar_url: <string> | default = '' ]
+
 # The HTTP client's configuration.
 [ http_config: <http_config> | default = global.http_config ]
 ```
@@ -859,6 +903,7 @@ webhook_url_file: <filepath>
 [ send_resolved: <boolean> | default = false ]
 
 # The email address to send notifications to.
+# Allows a comma separated list of rfc5322 compliant email addresses.
 to: <tmpl_string>
 
 # The sender's address.
@@ -884,7 +929,7 @@ to: <tmpl_string>
 
 # TLS configuration.
 tls_config:
-  [ <tls_config> ]
+  [ <tls_config> | default = global.smtp_tls_config ]
 
 # The HTML body of the email notification.
 [ html: <tmpl_string> | default = '{{ template "email.default.html" . }}' ]
@@ -899,6 +944,8 @@ tls_config:
 ### `<msteams_config>`
 
 Microsoft Teams notifications are sent via the [Incoming Webhooks](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/what-are-webhooks-and-connectors) API endpoint.
+
+DEPRECATION NOTICE: Microsoft is deprecating the creation and usage of [Microsoft 365 connectors via Microsoft Teams](https://devblogs.microsoft.com/microsoft365dev/retirement-of-office-365-connectors-within-microsoft-teams/). Consider migrating to using [Workflows](https://learn.microsoft.com/en-us/power-automate/teams/send-a-message-in-teams) with the msteamsv2 config.
 
 ```yaml
 # Whether to notify about resolved alerts.
@@ -920,6 +967,120 @@ Microsoft Teams notifications are sent via the [Incoming Webhooks](https://learn
 
 # The HTTP client's configuration.
 [ http_config: <http_config> | default = global.http_config ]
+```
+
+### `<msteamsv2_config>`
+
+Microsoft Teams v2 notifications using the new message format with adaptive cards as required by [flows](https://learn.microsoft.com/en-us/power-automate/teams/overview). Please follow [the documentation](https://support.microsoft.com/en-gb/office/create-incoming-webhooks-with-workflows-for-microsoft-teams-8ae491c7-0394-4861-ba59-055e33f75498) for more information on how to set up this integration.
+
+```yaml
+# Whether to notify about resolved alerts.
+[ send_resolved: <boolean> | default = true ]
+
+# The incoming webhook URL.
+# webhook_url and webhook_url_file are mutually exclusive.
+[ webhook_url: <secret> ]
+[ webhook_url_file: <filepath> ]
+
+# Message title template.
+[ title: <tmpl_string> | default = '{{ template "msteamsv2.default.title" . }}' ]
+
+# Message body template.
+[ text: <tmpl_string> | default = '{{ template "msteamsv2.default.text" . }}' ]
+
+# The HTTP client's configuration.
+[ http_config: <http_config> | default = global.http_config ]
+```
+
+### `<jira_config>`
+
+JIRA notifications are sent via [JIRA Rest API v2](https://developer.atlassian.com/cloud/jira/platform/rest/v2/intro/)
+or [JIRA REST API v3](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/#version).
+
+Note: This integration is only tested against a Jira Cloud instance.
+Jira Data Center (on premise instance) can work, but it's not guaranteed.
+
+Both APIs have the same feature set. The difference is that V2 supports [Wiki Markup](https://jira.atlassian.com/secure/WikiRendererHelpAction.jspa?section=all)
+for the issue description and V3 supports [Atlassian Document Format (ADF)](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/).
+The default `jira.default.description` template only works with V2.
+
+```yaml
+# Whether to notify about resolved alerts.
+[ send_resolved: <boolean> | default = true ]
+
+# The URL to send API requests to. The full API path must be included.
+# Example: https://company.atlassian.net/rest/api/2/
+[ api_url: <string> | default = global.jira_api_url ]
+
+# The project key where issues are created.
+project: <string>
+
+# Issue summary template.
+[ summary: <tmpl_string> | default = '{{ template "jira.default.summary" . }}' ]
+
+# Issue description template.
+[ description: <tmpl_string> | default = '{{ template "jira.default.description" . }}' ]
+
+# Labels to be added to the issue.
+labels:
+  [ - <tmpl_string> ... ]
+
+# Priority of the issue.
+[ priority: <tmpl_string> | default = '{{ template "jira.default.priority" . }}' ]
+
+# Type of the issue (e.g. Bug).
+[ issue_type: <string> ]
+
+# Name of the workflow transition to resolve an issue. The target status must have the category "done".
+# NOTE: The name of the transition can be localized and depends on the language setting of the service account.
+[ resolve_transition: <string> ]
+
+# Name of the workflow transition to reopen an issue. The target status should not have the category "done".
+# NOTE: The name of the transition can be localized and depends on the language setting of the service account.
+[ reopen_transition: <string> ]
+
+# If reopen_transition is defined, ignore issues with that resolution.
+[ wont_fix_resolution: <string> ]
+
+# If reopen_transition is defined, reopen the issue when it is not older than this value (rounded down to the nearest minute).
+# The resolutiondate field is used to determine the age of the issue.
+[ reopen_duration: <duration> ]
+
+# Other issue and custom fields.
+fields:
+  [ <string>: <jira_field> ... ]
+
+
+# The HTTP client's configuration. You must use this configuration to supply the personal access token (PAT) as part of the HTTP `Authorization` header.
+# For Jira Cloud, use basic_auth with the email address as the username and the PAT as the password.
+# For Jira Data Center, use the 'authorization' field with 'credentials: <PAT value>'.
+[ http_config: <http_config> | default = global.http_config ]
+```
+
+The `labels` field is a list of labels added to the issue. Template expressions are supported. For example:
+
+```yaml
+labels:
+  - 'alertmanager'
+  - '{{ .CommonLabels.severity }}'
+```
+
+#### `<jira_field>`
+
+Jira issue field can have multiple types.
+Depends on the field type, the values must be provided differently.
+See https://developer.atlassian.com/server/jira/platform/jira-rest-api-examples/#setting-custom-field-data-for-other-field-types for further examples.
+
+```yaml
+fields:
+    # Components
+    components: { name: "Monitoring" }
+    # Custom Field TextField
+    customfield_10001: "Random text"
+    # Custom Field SelectList
+    customfield_10002: {"value": "red"}
+    # Custom Field MultiSelect
+    customfield_10003: [{"value": "red"}, {"value": "blue"}, {"value": "green"}]
 ```
 
 ### `<opsgenie_config>`
@@ -988,7 +1149,11 @@ responders:
 [ name: <tmpl_string> ]
 [ username: <tmpl_string> ]
 
-# "team", "teams", "user", "escalation" or "schedule".
+# One of `team`, `teams`, `user`, `escalation` or `schedule`.
+#
+# The `teams` responder is configured using the `name` field above.
+# This field can contain a comma-separated list of team names.
+# If the list is empty, no responders are configured.
 type: <tmpl_string>
 ```
 
@@ -1133,6 +1298,62 @@ token_file: <filepath>
 # The HTTP client's configuration.
 [ http_config: <http_config> | default = global.http_config ]
 ```
+
+### `<rocketchat_config>`
+
+Rocketchat notifications are sent via the [Rocketchat REST API](https://developer.rocket.chat/reference/api/rest-api/endpoints/messaging/chat-endpoints/postmessage).
+
+```yaml
+# Whether to notify about resolved alerts.
+[ send_resolved: <boolean> | default = true ]
+[ api_url: <string> | default = global.rocketchat_api_url ]
+[ channel: <tmpl_string> | default = global.rocketchat_api_url ]
+
+# The sender token and token_id
+# See https://docs.rocket.chat/use-rocket.chat/user-guides/user-panel/my-account#personal-access-tokens
+# token and token_file are mutually exclusive.
+# token_id and token_id_file are mutually exclusive.
+token: <secret>
+token_file: <filepath>
+token_id: <secret>
+token_id_file: <filepath>
+
+
+[ color: <tmpl_string | default '{{ if eq .Status "firing" }}red{{ else }}green{{ end }}' ]
+[ emoji <tmpl_string | default = '{{ template "rocketchat.default.emoji" . }}'
+[ icon_url <tmpl_string | default = '{{ template "rocketchat.default.iconurl" . }}'
+[ text <tmpl_string | default = '{{ template "rocketchat.default.text" . }}'
+[ title <tmpl_string | default = '{{ template "rocketchat.default.title" . }}'
+[ titleLink <tmpl_string | default = '{{ template "rocketchat.default.titlelink" . }}'
+[ text: <tmpl_string | default = '{{ template "rocketchat.default.text" . }}'
+fields:
+  [ <rocketchat_field_config> ... ]
+[ image_url <tmpl_string> ]
+[ thumb_url <tmpl_string> ]
+[ link_names <tmpl_string> ]
+[ short_fields: <boolean> | default = false ]
+actions:
+  [ <rocketchat_action_config> ... ]
+```
+
+#### `<rocketchat_field_config>`
+
+The fields are documented in the [Rocketchat API documentation](https://developer.rocket.chat/reference/api/rest-api/endpoints/messaging/chat-endpoints/postmessage#attachment-field-objects).
+
+```yaml
+[ title: <tmpl_string> ]
+[ value: <tmpl_string> ]
+[ short: <boolean> | default = rocketchat_config.short_fields ]
+```
+
+#### `<rocketchat_action_config>`
+The fields are documented in the [Rocketchat API api models](https://github.com/RocketChat/Rocket.Chat.Go.SDK/blob/master/models/message.go).
+
+```yaml
+[ type: <tmpl_string> | ignored, only "button" is supported ]
+[ text: <tmpl_string> ]
+[ url: <tmpl_string> ]
+[ msg: <tmpl_string> ]
 
 ### `<slack_config>`
 
@@ -1299,6 +1520,9 @@ attributes:
 # ID of the chat where to send the messages.
 [ chat_id: <int> ]
 
+# Optional ID of the message thread where to send the messages.
+[ message_thread_id: <int> ]
+
 # Message template.
 [ message: <tmpl_string> default = '{{ template "telegram.default.message" .}}' ]
 
@@ -1445,11 +1669,11 @@ API](http://admin.wechat.com/wiki/index.php?title=Customer_Service_Messages).
 [ api_url: <string> | default = global.webex_api_url ]
 
 # ID of the Webex Teams room where to send the messages.
-room_id: <string>
+room_id: <tmpl_string>
 
 # Message template.
 [ message: <tmpl_string> default = '{{ template "webex.default.message" .}}' ]
 
-# The HTTP client's configuration. You must use this configuration to supply the bot token as part of the HTTP `Authorization` header. 
+# The HTTP client's configuration. You must use this configuration to supply the bot token as part of the HTTP `Authorization` header.
 [ http_config: <http_config> | default = global.http_config ]
 ```
