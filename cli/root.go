@@ -22,11 +22,10 @@ import (
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	clientruntime "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
 	promconfig "github.com/prometheus/common/config"
+	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/common/version"
 	"golang.org/x/mod/semver"
 
@@ -34,7 +33,7 @@ import (
 	"github.com/prometheus/alertmanager/cli/config"
 	"github.com/prometheus/alertmanager/cli/format"
 	"github.com/prometheus/alertmanager/featurecontrol"
-	"github.com/prometheus/alertmanager/matchers/compat"
+	"github.com/prometheus/alertmanager/matcher/compat"
 )
 
 var (
@@ -51,12 +50,11 @@ var (
 )
 
 func initMatchersCompat(_ *kingpin.ParseContext) error {
-	logger := log.NewLogfmtLogger(os.Stdout)
+	promslogConfig := &promslog.Config{Writer: os.Stdout}
 	if verbose {
-		logger = level.NewFilter(logger, level.AllowDebug())
-	} else {
-		logger = level.NewFilter(logger, level.AllowInfo())
+		_ = promslogConfig.Level.Set("debug")
 	}
+	logger := promslog.New(promslogConfig)
 	featureConfig, err := featurecontrol.NewFlags(logger, featureFlags)
 	if err != nil {
 		kingpin.Fatalf("error parsing the feature flag list: %v\n", err)
@@ -89,7 +87,7 @@ const (
 	defaultAmApiv2path = "/api/v2"
 )
 
-// NewAlertmanagerClient initializes an alertmanager client with the given URL
+// NewAlertmanagerClient initializes an alertmanager client with the given URL.
 func NewAlertmanagerClient(amURL *url.URL) *client.AlertmanagerAPI {
 	address := defaultAmHost + ":" + defaultAmPort
 	schemes := []string{"http"}
@@ -145,7 +143,7 @@ func NewAlertmanagerClient(amURL *url.URL) *client.AlertmanagerAPI {
 	return c
 }
 
-// Execute is the main function for the amtool command
+// Execute is the main function for the amtool command.
 func Execute() {
 	app := kingpin.New("amtool", helpRoot).UsageWriter(os.Stdout)
 
