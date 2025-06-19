@@ -16,7 +16,7 @@
 !/notify/email/testdata/*.yml
 !/doc/examples/simple.yml
 !/circle.yml
-!/.travis.yml
+!.travis.yml
 !/.promu.yml
 !/api/v2/openapi.yaml
 !.github/workflows/*.yml
