@@ -19,3 +19,8 @@
 !/.travis.yml
 !/.promu.yml
 !/api/v2/openapi.yaml
+!.github/workflows/*.yml
+
+# Include CI/build configuration files in vendor directory
+!vendor/**/*.yml
+!vendor/**/*.yaml
