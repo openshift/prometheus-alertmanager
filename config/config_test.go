@@ -300,7 +300,7 @@ receivers:
 `
 	_, err := Load(in)
 
-	expected := "cannot have wildcard group_by (`...`) and other other labels at the same time"
+	expected := "cannot have wildcard group_by (`...`) and other labels at the same time"
 
 	if err == nil {
 		t.Fatalf("no error returned, expected:\n%q", expected)
@@ -565,9 +565,7 @@ func TestJSONMarshalHideSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// u003c -> "<"
-	// u003e -> ">"
-	require.Equal(t, "{\"S\":\"\\u003csecret\\u003e\"}", string(c), "Secret not properly elided.")
+	require.JSONEq(t, `{"S":"<secret>"}`, string(c), "Secret not properly elided.")
 }
 
 func TestJSONMarshalShowSecret(t *testing.T) {
@@ -584,7 +582,7 @@ func TestJSONMarshalShowSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	require.Equal(t, "{\"S\":\"test\"}", string(c), "config's String method must reveal authentication credentials when MarshalSecretValue = true.")
+	require.JSONEq(t, `{"S":"test"}`, string(c), "config's String method must reveal authentication credentials when MarshalSecretValue = true.")
 }
 
 func TestJSONMarshalHideSecretURL(t *testing.T) {
@@ -720,14 +718,12 @@ func TestUnmarshalNilURL(t *testing.T) {
 		var u URL
 		err := json.Unmarshal(b, &u)
 		require.Error(t, err, "unsupported scheme \"\" for URL")
-		require.Nil(t, nil, u.URL)
 	}
 
 	{
 		var u URL
 		err := yaml.Unmarshal(b, &u)
 		require.NoError(t, err)
-		require.Nil(t, nil, u.URL) // UnmarshalYAML is not even called when unmarshalling "null".
 	}
 }
 
@@ -822,7 +818,7 @@ func TestUnmarshalEmptyRegexp(t *testing.T) {
 		err := json.Unmarshal(b, &re)
 		require.NoError(t, err)
 		require.Equal(t, regexp.MustCompile("^(?:)$"), re.Regexp)
-		require.Equal(t, "", re.original)
+		require.Empty(t, re.original)
 	}
 
 	{
@@ -830,7 +826,7 @@ func TestUnmarshalEmptyRegexp(t *testing.T) {
 		err := yaml.Unmarshal(b, &re)
 		require.NoError(t, err)
 		require.Equal(t, regexp.MustCompile("^(?:)$"), re.Regexp)
-		require.Equal(t, "", re.original)
+		require.Empty(t, re.original)
 	}
 }
 
@@ -841,8 +837,7 @@ func TestUnmarshalNullRegexp(t *testing.T) {
 		var re Regexp
 		err := json.Unmarshal(input, &re)
 		require.NoError(t, err)
-		require.Nil(t, nil, re.Regexp)
-		require.Equal(t, "", re.original)
+		require.Empty(t, re.original)
 	}
 
 	{
@@ -850,7 +845,7 @@ func TestUnmarshalNullRegexp(t *testing.T) {
 		err := yaml.Unmarshal(input, &re) // Interestingly enough, unmarshalling `null` in YAML doesn't even call UnmarshalYAML.
 		require.NoError(t, err)
 		require.Nil(t, re.Regexp)
-		require.Equal(t, "", re.original)
+		require.Empty(t, re.original)
 	}
 }
 

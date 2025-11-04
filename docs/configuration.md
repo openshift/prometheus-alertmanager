@@ -4,8 +4,6 @@ sort_rank: 3
 nav_icon: sliders
 ---
 
-# Configuration
-
 [Alertmanager](https://github.com/prometheus/alertmanager) is configured via
 command-line flags and a configuration file.
 While the command-line flags configure immutable system parameters, the
@@ -205,25 +203,56 @@ match_re:
 matchers:
   [ - <matcher> ... ]
 
-# How long to initially wait to send a notification for a group
-# of alerts. Allows to wait for an inhibiting alert to arrive or collect
-# more initial alerts for the same group. (Usually ~0s to few minutes.)
+# How long to wait before sending the first notification for a new group of
+# alerts. Allows to wait for alerts to arrive from other rule groups or
+# Prometheus servers, and for one or more inhibiting alerts to arrive and mute
+# any target alerts before the first notification.
+#
+# A short group_wait will reduce the time to wait before sending the first
+# notification for a new group of alerts. However, if group_wait is too short
+# then the first notification might not contain the complete set of expected
+# alerts, and alerts that should be inhibited might not be inhibited if the
+# inhibiting alerts have not arrived in time.
+#
+# A long group_wait will increase the time to wait before sending the first
+# notification for a new group of alerts. However, if group_wait is too long
+# then notifications for firing alerts might not be sent within a reasonable
+# time.
+#
+# If an alert is resolved before group_wait has elapsed, no notification will
+# be sent for that alert. This reduces noise of flapping alerts.
+
+# A notification for any alerts that missed the initial group_wait will be
+# sent at the next group_interval instead.
+#
 # If omitted, child routes inherit the group_wait of the parent route.
 [ group_wait: <duration> | default = 30s ]
 
-# How long to wait before sending a notification about new alerts that
-# are added to a group of alerts for which an initial notification has
-# already been sent. (Usually ~5m or more.) If omitted, child routes
-# inherit the group_interval of the parent route.
+# How long to wait before sending subsequent notifications for an existing
+# group of alerts after group_wait.
+#
+# The group_interval is a recurring timer that starts as soon as group_wait
+# has elapsed. At each group_interval, Alertmanager checks if any new alerts
+# have fired or any firing alerts have resolved since the last group_interval,
+# and if they have a notification is sent. If they haven't, Alertmanager checks
+# if the repeat_interval has elapsed instead.
+#
+# If omitted, child routes inherit the group_interval of the parent route.
 [ group_interval: <duration> | default = 5m ]
 
-# How long to wait before sending a notification again if it has already
-# been sent successfully for an alert. (Usually ~3h or more). If omitted,
-# child routes inherit the repeat_interval of the parent route.
-# Note that this parameter is implicitly bound by Alertmanager's
-# `--data.retention` configuration flag. Notifications will be resent after either
-# repeat_interval or the data retention period have passed, whichever
-# occurs first. `repeat_interval` should be a multiple of `group_interval`.
+# How long to wait before repeating the last notification. Notifications are
+# not repeated if any new alerts have fired or any firing alerts have resolved
+# since the last group_interval.
+#
+# Since the repeat_interval is checked after each group_interval, it should
+# be a multiple of the group_interval. If it's not, the repeat_interval
+# is rounded up to the next multiple of the group_interval.
+#
+# In addition, if repeat_interval is longer then `--data.retention`, the
+# notification will be repeated at the end of the data retention period
+# instead.
+#
+# If omitted, child routes inherit the repeat_interval of the parent route.
 [ repeat_interval: <duration> | default = 4h ]
 
 # Times when the route should be muted. These must match the name of a
@@ -717,6 +746,8 @@ opsgenie_configs:
   [ - <opsgenie_config>, ... ]
 pagerduty_configs:
   [ - <pagerduty_config>, ... ]
+incidentio_configs:
+  [ - <incidentio_config>, ... ]
 pushover_configs:
   [ - <pushover_config>, ... ]
 rocketchat_configs:
@@ -789,6 +820,18 @@ oauth2:
 # Configures the TLS settings.
 tls_config:
   [ <tls_config> ]
+
+# Custom HTTP headers to be sent along with each request.
+# Headers that are set by Prometheus itself can't be overwritten.
+http_headers:
+  # Header name.
+  [ <string>:
+    # Header values.
+    [ values: [<string>, ...] ]
+    # Headers values. Hidden in configuration page.
+    [ secrets: [<secret>, ...] ]
+    # Files to read header values from.
+    [ files: [<string>, ...] ] ]
 ```
 
 #### `<oauth2>`
@@ -1016,6 +1059,10 @@ The default `jira.default.description` template only works with V2.
 # Example: https://company.atlassian.net/rest/api/2/
 [ api_url: <string> | default = global.jira_api_url ]
 
+# The API Type to use for search requests, can be either auto, cloud or datacenter
+# Example: cloud
+[ api_type: <string> | default = auto ]
+   
 # The project key where issues are created.
 project: <string>
 
@@ -1299,6 +1346,11 @@ token_file: <filepath>
 # Optional time to live (TTL) to use for notification, see https://pushover.net/api#ttl
 [ ttl: <duration> ]
 
+# Optional HTML/monospace formatting for the message, see https://pushover.net/api#html
+# html and monospace formatting are mutually exclusive.
+[ html: <boolean> | default = false ]
+[ monospace: <boolean> | default = false ]
+
 # The HTTP client's configuration.
 [ http_config: <http_config> | default = global.http_config ]
 ```
@@ -1361,7 +1413,7 @@ The fields are documented in the [Rocketchat API api models](https://github.com/
 [ msg: <tmpl_string> ]
 ```
 
-#### `<slack_config>`
+### `<slack_config>`
 
 Slack notifications can be sent via [Incoming webhooks](https://api.slack.com/messaging/webhooks) or [Bot tokens](https://api.slack.com/authentication/token-types).
 
@@ -1641,6 +1693,46 @@ endpoint:
 There is a list of
 [integrations](https://prometheus.io/docs/operating/integrations/#alertmanager-webhook-receiver) with
 this feature.
+
+### `<incidentio_config>`
+
+incident.io notifications are sent via the [incident.io Alert Sources API](https://api-docs.incident.io/tag/Alert-Sources-V2#operation/Alert%20Sources%20V2_Create).
+
+When configuring this integration, you can do so via the `http_config` by setting the `authorization` directly or using one of `alert_source_token` or `alert_source_token_file`. The configuration of `alert_source_token` or `alert_source_token_file` takes precedence over `http_config`.
+
+Please be aware that if the payload exceeds incident.io's API limits (512KB), the integration will automatically truncate all alerts except the first one.
+
+```yaml
+# Whether to notify about resolved alerts.
+[ send_resolved: <boolean> | default = true ]
+
+# The HTTP client's configuration.
+[ http_config: <http_config> | default = global.http_config ]
+
+# The URL to send the incident.io alert. This would typically be provided by the 
+# incident.io team when setting up an alert source.
+# URL and URL_file are mutually exclusive.
+url: <string>
+url_file: <filepath>
+
+# The alert source token is used to authenticate with incident.io.
+# alert_source_token and alert_source_token_file are mutually exclusive.
+[ alert_source_token: <secret> ]
+[ alert_source_token_file: <filepath> ]
+
+# The maximum number of alerts to be sent per incident.io message.
+# Alerts exceeding this threshold will be truncated. Setting this to 0
+# allows an unlimited number of alerts. Note that if the payload exceeds
+# incident.io's size limits (512KB), the notifier will automatically drop
+# all alerts except the first one. If the payload is still too
+# large after this truncation, you will receive a 429 response and alerts
+# will not be ingested.
+[ max_alerts: <int> | default = 0 ]
+
+# Timeout is the maximum time allowed to invoke incident.io. Setting this to 0
+# does not impose a timeout.
+[ timeout: <duration> | default = 0s ]
+```
 
 ### `<wechat_config>`
 
