@@ -278,7 +278,6 @@ func TestData(t *testing.T) {
 			},
 		},
 	} {
-		tc := tc
 		t.Run("", func(t *testing.T) {
 			got := tmpl.Data(tc.receiver, tc.groupLabels, tc.alerts...)
 			require.Equal(t, tc.exp, got)
@@ -368,9 +367,26 @@ func TestTemplateExpansion(t *testing.T) {
 			exp:   "<b>",
 		},
 		{
+			title: "URL template with escaping",
+			in:    `<a href="/search?{{ "q=test%20foo" }}"></a>`,
+			html:  true,
+			exp:   `<a href="/search?q%3dtest%2520foo"></a>`,
+		},
+		{
+			title: "URL template using safeUrl",
+			in:    `<a href="/search?{{ "q=test%20foo" | safeUrl }}"></a>`,
+			html:  true,
+			exp:   `<a href="/search?q=test%20foo"></a>`,
+		},
+		{
 			title: "Template using reReplaceAll",
 			in:    `{{ reReplaceAll "ab" "AB" "abcdabcda"}}`,
 			exp:   "ABcdABcda",
+		},
+		{
+			title: "Template using urlUnescape",
+			in:    `{{ "search?q=test%20foo" | urlUnescape }}`,
+			exp:   "search?q=test foo",
 		},
 		{
 			title: "Template using stringSlice",
@@ -385,8 +401,66 @@ func TestTemplateExpansion(t *testing.T) {
 			},
 			exp: "[key2 key4]",
 		},
+		{
+			title: "Template using toJson with string",
+			in:    `{{ "test" | toJson }}`,
+			exp:   `"test"`,
+		},
+		{
+			title: "Template using toJson with number",
+			in:    `{{ 42 | toJson }}`,
+			exp:   `42`,
+		},
+		{
+			title: "Template using toJson with boolean",
+			in:    `{{ true | toJson }}`,
+			exp:   `true`,
+		},
+		{
+			title: "Template using toJson with map",
+			in:    `{{ . | toJson }}`,
+			data:  map[string]any{"key": "value", "number": 123},
+			exp:   `{"key":"value","number":123}`,
+		},
+		{
+			title: "Template using toJson with slice",
+			in:    `{{ . | toJson }}`,
+			data:  []string{"a", "b", "c"},
+			exp:   `["a","b","c"]`,
+		},
+		{
+			title: "Template using toJson with KV",
+			in:    `{{ .CommonLabels | toJson }}`,
+			data: Data{
+				CommonLabels: KV{"severity": "critical", "job": "foo"},
+			},
+			exp: `{"job":"foo","severity":"critical"}`,
+		},
+		{
+			title: "Template using toJson with Alerts",
+			in:    `{{ .Alerts | toJson }}`,
+			data: Data{
+				Alerts: Alerts{
+					{
+						Status: "firing",
+						Labels: KV{"alertname": "test"},
+					},
+				},
+			},
+			exp: `[{"status":"firing","labels":{"alertname":"test"},"annotations":null,"startsAt":"0001-01-01T00:00:00Z","endsAt":"0001-01-01T00:00:00Z","generatorURL":"","fingerprint":""}]`,
+		},
+		{
+			title: "Template using toJson with Alerts.Firing()",
+			in:    `{{ .Alerts.Firing | toJson }}`,
+			data: Data{
+				Alerts: Alerts{
+					{Status: "firing"},
+					{Status: "resolved"},
+				},
+			},
+			exp: `[{"status":"firing","labels":null,"annotations":null,"startsAt":"0001-01-01T00:00:00Z","endsAt":"0001-01-01T00:00:00Z","generatorURL":"","fingerprint":""}]`,
+		},
 	} {
-		tc := tc
 		t.Run(tc.title, func(t *testing.T) {
 			f := tmpl.ExecuteTextString
 			if tc.html {
@@ -448,7 +522,6 @@ func TestTemplateExpansionWithOptions(t *testing.T) {
 			exp: "bar",
 		},
 	} {
-		tc := tc
 		t.Run(tc.title, func(t *testing.T) {
 			tmpl, err := FromGlobs([]string{}, tc.options...)
 			require.NoError(t, err)
@@ -561,11 +634,29 @@ func TestTemplateFuncs(t *testing.T) {
 		in:    "{{ . | since | humanizeDuration }}",
 		data:  time.Now().Add(-1 * time.Hour),
 		exp:   "1h 0m 0s",
+	}, {
+		title: "Template using toJson with string",
+		in:    `{{ "hello" | toJson }}`,
+		exp:   `"hello"`,
+	}, {
+		title: "Template using toJson with map",
+		in:    `{{ . | toJson }}`,
+		data:  map[string]string{"key": "value"},
+		exp:   `{"key":"value"}`,
+	}, {
+		title: "Template using toJson with Alerts.Firing()",
+		in:    `{{ .Alerts.Firing | toJson }}`,
+		data: Data{
+			Alerts: Alerts{
+				{Status: "firing", Labels: KV{"alertname": "test"}},
+				{Status: "resolved"},
+			},
+		},
+		exp: `[{"status":"firing","labels":{"alertname":"test"},"annotations":null,"startsAt":"0001-01-01T00:00:00Z","endsAt":"0001-01-01T00:00:00Z","generatorURL":"","fingerprint":""}]`,
 	}} {
-		tc := tc
 		t.Run(tc.title, func(t *testing.T) {
 			wg := sync.WaitGroup{}
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -580,6 +671,69 @@ func TestTemplateFuncs(t *testing.T) {
 				}()
 			}
 			wg.Wait()
+		})
+	}
+}
+
+func TestDeepCopyWithTemplate(t *testing.T) {
+	identity := TemplateFunc(func(s string) (string, error) { return s, nil })
+	withSuffix := TemplateFunc(func(s string) (string, error) { return s + "-templated", nil })
+
+	for _, tc := range []struct {
+		title   string
+		input   any
+		fn      TemplateFunc
+		want    any
+		wantErr string
+	}{
+		{
+			title: "string keeps templated value",
+			input: "hello",
+			fn:    withSuffix,
+			want:  "hello-templated",
+		},
+		{
+			title: "string parsed as YAML map",
+			input: "foo: bar",
+			fn:    identity,
+			want:  map[string]any{"foo": "bar"},
+		},
+		{
+			title: "slice templating applied recursively",
+			input: []any{"foo", 42},
+			fn:    withSuffix,
+			want:  []any{"foo-templated", 42},
+		},
+		{
+			title: "map converts keys and drops non-string",
+			input: map[any]any{
+				"foo":    "bar",
+				42:       "ignore",
+				"nested": []any{"baz"},
+			},
+			fn: withSuffix,
+			want: map[string]any{
+				"foo-templated":    "bar-templated",
+				"nested-templated": []any{"baz-templated"},
+			},
+		},
+		{
+			title: "non string value returned as-is",
+			input: 123,
+			fn:    identity,
+			want:  123,
+		},
+		{
+			title: "nil input",
+			input: nil,
+			fn:    identity,
+			want:  nil,
+		},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			got, err := DeepCopyWithTemplate(tc.input, tc.fn)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
 		})
 	}
 }

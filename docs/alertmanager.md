@@ -62,7 +62,7 @@ Silences are configured in the web interface of the Alertmanager.
 
 ## Client behavior
 
-The Alertmanager has [special requirements](clients.md) for behavior of its
+The Alertmanager has [special requirements](alerts_api.md) for behavior of its
 client. Those are only relevant for advanced use cases where Prometheus
 is not used to send alerts.
 
@@ -72,3 +72,17 @@ Alertmanager supports configuration to create a cluster for high availability.
 This can be configured using the [--cluster-*](https://github.com/prometheus/alertmanager#high-availability) flags.
 
 It's important not to load balance traffic between Prometheus and its Alertmanagers, but instead, point Prometheus to a list of all Alertmanagers.
+
+## Alert limits (optional)
+
+Alertmanager supports configuration to limit the number of active alerts per alertname.
+This can be configured using the [--alerts.per-alertname-limit] flag.
+
+When the limit is reached any new alerts are dropped, heartbeats from already know alerts are processed.
+The known alert (fingerprint) automatically expire to make room for new alerts.
+
+This feature is useful when an unexpected high number of instances of the same alert are sent to Alertmanager.
+Limiting the number of alerts per alertname can prevent reliability issues and avoid alert receivers from being flooded.
+
+The `alertmanager_alerts_limited_total` metric shows the total number of alerts that were dropped due to per alert name limit.
+Enabling the `alert-names-in-metrics` feature flag will add the `alertname` label to the metric.
