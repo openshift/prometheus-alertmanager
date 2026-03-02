@@ -8,6 +8,7 @@ FROM registry.ci.openshift.org/ocp/4.22:base-rhel9-minimal
 LABEL io.k8s.display-name="OpenShift Prometheus Alert Manager" \
       io.k8s.description="Prometheus Alert Manager" \
       io.openshift.tags="prometheus,monitoring" \
+      io.prometheus.image.variant="ocp" \
       summary="Prometheus Alert Manager" \
       maintainer="OpenShift Monitoring Team <team-monitoring@redhat.com>"
 
