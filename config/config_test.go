@@ -934,6 +934,7 @@ func TestEmptyFieldsAndRegex(t *testing.T) {
 				InsecureSkipVerify: false,
 			},
 			SlackAPIURL:      (*SecretURL)(mustParseURL("http://slack.example.com/")),
+			SlackAppURL:      mustParseURL("https://slack.com/api/chat.postMessage"),
 			SMTPRequireTLS:   true,
 			PagerdutyURL:     mustParseURL("https://events.pagerduty.com/v2/enqueue"),
 			OpsGenieAPIURL:   mustParseURL("https://api.opsgenie.com/"),
@@ -1074,6 +1075,10 @@ func TestGlobalAndLocalSMTPPassword(t *testing.T) {
 
 	require.Equal(t, Secret("mysecret"), config.Receivers[0].EmailConfigs[2].AuthPassword, "third email should use password mysecret")
 	require.Emptyf(t, config.Receivers[0].EmailConfigs[2].AuthPasswordFile, "file field should be empty when password provided")
+
+	require.Equal(t, Secret("myprecious"), config.Receivers[0].EmailConfigs[3].AuthSecret, "fourth email should use secret myprecious")
+
+	require.Equal(t, "/tmp/localuser4secret", config.Receivers[0].EmailConfigs[4].AuthSecretFile, "fifth email should use secret file /tmp/localuser4secret")
 }
 
 func TestGroupByAll(t *testing.T) {
@@ -1136,6 +1141,68 @@ func TestVictorOpsNoAPIKey(t *testing.T) {
 	}
 	if err.Error() != "no global VictorOps API Key set" {
 		t.Errorf("Expected: %s\nGot: %s", "no global VictorOps API Key set", err.Error())
+	}
+}
+
+func TestTelegramDefaultBotToken(t *testing.T) {
+	conf, err := LoadFile("testdata/conf.telegram-default-bot-token.yml")
+	if err != nil {
+		t.Fatalf("Error parsing %s: %s", "testdata/conf.telegram-default-bot-token.yml", err)
+	}
+
+	defaultBotToken := conf.Global.TelegramBotToken
+	overrideBotToken := Secret("qwe456")
+	if defaultBotToken != conf.Receivers[0].TelegramConfigs[0].BotToken {
+		t.Fatalf("Invalid telegram bot token: %s\nExpected: %s", conf.Receivers[0].TelegramConfigs[0].BotToken, defaultBotToken)
+	}
+	if overrideBotToken != conf.Receivers[1].TelegramConfigs[0].BotToken {
+		t.Errorf("Invalid telegram bot token: %s\nExpected: %s", conf.Receivers[0].TelegramConfigs[0].BotToken, string(overrideBotToken))
+	}
+}
+
+func TestTelegramDefaultBotTokenFile(t *testing.T) {
+	conf, err := LoadFile("testdata/conf.telegram-default-bot-token-file.yml")
+	if err != nil {
+		t.Fatalf("Error parsing %s: %s", "testdata/conf.telegram-default-bot-token-file.yml", err)
+	}
+
+	defaultBotToken := conf.Global.TelegramBotTokenFile
+	overrideBotToken := "/override_file"
+	if defaultBotToken != conf.Receivers[0].TelegramConfigs[0].BotTokenFile {
+		t.Fatalf("Invalid telegram bot token file: %s\nExpected: %s", conf.Receivers[0].TelegramConfigs[0].BotTokenFile, defaultBotToken)
+	}
+	if overrideBotToken != conf.Receivers[1].TelegramConfigs[0].BotTokenFile {
+		t.Errorf("Invalid telegram bot token file: %s\nExpected: %s", conf.Receivers[0].TelegramConfigs[0].BotTokenFile, overrideBotToken)
+	}
+}
+
+func TestTelegramBothBotTokenAndFile(t *testing.T) {
+	_, err := LoadFile("testdata/conf.telegram-both-bot-token-and-file.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.telegram-both-bot-token-and-file.yml", err)
+	}
+	if err.Error() != "at most one of telegram_bot_token & telegram_bot_token_file must be configured" {
+		t.Errorf("Expected: %s\nGot: %s", "at most one of telegram_bot_token & telegram_bot_token_file must be configured", err.Error())
+	}
+}
+
+func TestTelegramValidReceiverBothBotTokenAndFile(t *testing.T) {
+	_, err := LoadFile("testdata/conf.telegram-valid-receiver-both-bot-token-and-file.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.telegram-valid-receiver-both-bot-token-and-file.yml", err)
+	}
+	if err.Error() != "at most one of telegram_bot_token & telegram_bot_token_file must be configured" {
+		t.Errorf("Expected: %s\nGot: %s", "at most one of telegram_bot_token & telegram_bot_token_file must be configured", err.Error())
+	}
+}
+
+func TestTelegramNoBotToken(t *testing.T) {
+	_, err := LoadFile("testdata/conf.telegram-no-bot-token.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.telegram-no-bot-token.yml", err)
+	}
+	if err.Error() != "missing bot_token or bot_token_file on telegram_config" {
+		t.Errorf("Expected: %s\nGot: %s", "missing bot_token or bot_token_file on telegram_config", err.Error())
 	}
 }
 
@@ -1212,13 +1279,116 @@ func TestSlackBothAPIURLAndFile(t *testing.T) {
 	}
 }
 
-func TestSlackNoAPIURL(t *testing.T) {
-	_, err := LoadFile("testdata/conf.slack-no-api-url.yml")
+func TestSlackBothAppTokenAndFile(t *testing.T) {
+	_, err := LoadFile("testdata/conf.slack-both-file-and-token.yml")
 	if err == nil {
-		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.slack-no-api-url.yml", err)
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.slack-both-file-and-token.yml", err)
 	}
-	if err.Error() != "no global Slack API URL set either inline or in a file" {
-		t.Errorf("Expected: %s\nGot: %s", "no global Slack API URL set either inline or in a file", err.Error())
+	if err.Error() != "at most one of slack_app_token & slack_app_token_file must be configured" {
+		t.Errorf("Expected: %s\nGot: %s", "at most one of slack_app_token & slack_app_token_file must be configured", err.Error())
+	}
+}
+
+func TestSlackBothAppTokenAndAPIURL(t *testing.T) {
+	_, err := LoadFile("testdata/conf.slack-both-url-and-token.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.slack-both-url-and-token.yml", err)
+	}
+	if err.Error() != "at most one of slack_app_token/slack_app_token_file & slack_api_url/slack_api_url_file must be configured" {
+		t.Errorf("Expected: %s\nGot: %s", "at most one of slack_app_token/slack_app_token_file & slack_api_url/slack_api_url_file must be configured", err.Error())
+	}
+}
+
+func TestSlackGlobalAppToken(t *testing.T) {
+	conf, err := LoadFile("testdata/conf.slack-default-app-token.yml")
+	if err != nil {
+		t.Fatalf("Error parsing %s: %s", "testdata/conf.slack-default-app-token.yml", err)
+	}
+
+	// no override
+	defaultToken := conf.Global.SlackAppToken
+	firstAuth := commoncfg.Authorization{
+		Type:        "Bearer",
+		Credentials: commoncfg.Secret(defaultToken),
+	}
+	firstConfig := conf.Receivers[0].SlackConfigs[0]
+	if firstConfig.AppToken != defaultToken {
+		t.Fatalf("Invalid Slack App token: %s\nExpected: %s", firstConfig.AppToken, defaultToken)
+	}
+	if firstConfig.APIURL.String() != conf.Global.SlackAppURL.String() {
+		t.Fatalf("Expected API URL: %s\nGot: %s", conf.Global.SlackAppURL.String(), firstConfig.APIURL.String())
+	}
+	if firstConfig.HTTPConfig == nil || firstConfig.HTTPConfig.Authorization == nil {
+		t.Fatalf("Error configuring Slack App authorization: %s", firstConfig.HTTPConfig)
+	}
+	if firstConfig.HTTPConfig.Authorization.Type != firstAuth.Type {
+		t.Fatalf("Error configuring Slack App authorization type: %s\nExpected: %s", firstConfig.HTTPConfig.Authorization.Type, firstAuth.Type)
+	}
+	if firstConfig.HTTPConfig.Authorization.Credentials != firstAuth.Credentials {
+		t.Fatalf("Error configuring Slack App authorization credentials: %s\nExpected: %s", firstConfig.HTTPConfig.Authorization.Credentials, firstAuth.Credentials)
+	}
+
+	// inline override
+	inlineToken := "xoxb-1234-xxxxxx"
+	secondAuth := commoncfg.Authorization{
+		Type:        "Bearer",
+		Credentials: commoncfg.Secret(inlineToken),
+	}
+	secondConfig := conf.Receivers[0].SlackConfigs[1]
+	if secondConfig.AppToken != Secret(inlineToken) {
+		t.Fatalf("Invalid Slack App token: %s\nExpected: %s", secondConfig.AppToken, inlineToken)
+	}
+	if secondConfig.HTTPConfig == nil || secondConfig.HTTPConfig.Authorization == nil {
+		t.Fatalf("Error configuring Slack App authorization: %s", secondConfig.HTTPConfig)
+	}
+	if secondConfig.HTTPConfig.Authorization.Type != secondAuth.Type {
+		t.Fatalf("Error configuring Slack App authorization type: %s\nExpected: %s", secondConfig.HTTPConfig.Authorization.Type, secondAuth.Type)
+	}
+	if secondConfig.HTTPConfig.Authorization.Credentials != secondAuth.Credentials {
+		t.Fatalf("Error configuring Slack App authorization credentials: %s\nExpected: %s", secondConfig.HTTPConfig.Authorization.Credentials, secondAuth.Credentials)
+	}
+
+	// custom app url
+	thirdConfig := conf.Receivers[0].SlackConfigs[2]
+	if thirdConfig.AppURL.String() != "http://api.fakeslack.example/" {
+		t.Fatalf("Invalid Slack URL: %s\nExpected: %s", thirdConfig.APIURL.String(), "http://mysecret.example.com/")
+	}
+
+	// workaround override
+	workaroundToken := "xoxb-my-bot-token"
+	fourthAuth := commoncfg.Authorization{
+		Type:        "Bearer",
+		Credentials: commoncfg.Secret(workaroundToken),
+	}
+	fourthConfig := conf.Receivers[0].SlackConfigs[3]
+	if fourthConfig.AppToken != "" {
+		t.Fatalf("Invalid Slack App token: %q\nExpected: %q", fourthConfig.AppToken, "")
+	}
+	if fourthConfig.HTTPConfig == nil || fourthConfig.HTTPConfig.Authorization == nil {
+		t.Fatalf("Error configuring Slack App authorization: %s", fourthConfig.HTTPConfig)
+	}
+	if fourthConfig.HTTPConfig.Authorization.Type != fourthAuth.Type {
+		t.Fatalf("Error configuring Slack App authorization type: %s\nExpected: %s", fourthConfig.HTTPConfig.Authorization.Type, fourthAuth.Type)
+	}
+	if fourthConfig.HTTPConfig.Authorization.Credentials != fourthAuth.Credentials {
+		t.Fatalf("Error configuring Slack App authorization credentials: %s\nExpected: %s", fourthConfig.HTTPConfig.Authorization.Credentials, fourthAuth.Credentials)
+	}
+
+	// override the global file with an inline webhook URL
+	apiURL := "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+	fifthConfig := conf.Receivers[0].SlackConfigs[4]
+	if fifthConfig.APIURL.String() != apiURL || fifthConfig.APIURLFile != "" {
+		t.Fatalf("Invalid Slack URL: %s\nExpected: %s", fifthConfig.APIURL.String(), apiURL)
+	}
+}
+
+func TestSlackNoAPIURL(t *testing.T) {
+	_, err := LoadFile("testdata/conf.slack-no-api-url-or-token.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.slack-no-api-url-or-token.yml", err)
+	}
+	if err.Error() != "no Slack API URL nor App token set either inline or in a file" {
+		t.Errorf("Expected: %s\nGot: %s", "no Slack API URL nor App token set either inline or in a file", err.Error())
 	}
 }
 
@@ -1398,7 +1568,6 @@ func TestUnmarshalHostPort(t *testing.T) {
 			err: true,
 		},
 	} {
-		tc := tc
 		t.Run(tc.in, func(t *testing.T) {
 			hp := HostPort{}
 			err := yaml.Unmarshal([]byte(tc.in), &hp)
@@ -1449,6 +1618,116 @@ func TestNilRegexp(t *testing.T) {
 	}
 }
 
+func TestSecretTemplURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "valid http URL",
+			input:       `"http://example.com/webhook"`,
+			expectError: false,
+		},
+		{
+			name:        "invalid URL missing scheme",
+			input:       `"example.com/webhook"`,
+			expectError: true,
+			errorMsg:    "unsupported scheme",
+		},
+		{
+			name:        "invalid URL unsupported scheme",
+			input:       `"ftp://example.com/webhook"`,
+			expectError: true,
+			errorMsg:    "unsupported scheme",
+		},
+		{
+			name:        "templated URL is not validated",
+			input:       `"http://example.com/{{ .GroupLabels.alertname }}"`,
+			expectError: false,
+		},
+		{
+			name:        "invalid URL with template is not validated",
+			input:       `"not-a-url-{{ .GroupLabels.alertname }}"`,
+			expectError: false,
+		},
+		{
+			name:        "invalid template syntax",
+			input:       `"http://example.com/{{ .Invalid"`,
+			expectError: true,
+			errorMsg:    "invalid template syntax",
+		},
+		{
+			name:        "empty string",
+			input:       `""`,
+			expectError: false,
+		},
+		{
+			name:        "secret token",
+			input:       `"<secret>"`,
+			expectError: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var u SecretTemplateURL
+			err := yaml.Unmarshal([]byte(tc.input), &u)
+
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSecretTemplURLMarshaling(t *testing.T) {
+	t.Run("marshals to secret token by default", func(t *testing.T) {
+		u := SecretTemplateURL("http://example.com/secret")
+
+		yamlOut, err := yaml.Marshal(&u)
+		require.NoError(t, err)
+		require.YAMLEq(t, "<secret>\n", string(yamlOut))
+
+		jsonOut, err := json.Marshal(&u)
+		require.NoError(t, err)
+		require.JSONEq(t, `"<secret>"`, string(jsonOut))
+	})
+
+	t.Run("marshals actual value when MarshalSecretValue is true", func(t *testing.T) {
+		MarshalSecretValue = true
+		defer func() { MarshalSecretValue = false }()
+
+		u := SecretTemplateURL("http://example.com/secret")
+
+		yamlOut, err := yaml.Marshal(&u)
+		require.NoError(t, err)
+		require.YAMLEq(t, "http://example.com/secret\n", string(yamlOut))
+
+		jsonOut, err := json.Marshal(&u)
+		require.NoError(t, err)
+		require.JSONEq(t, `"http://example.com/secret"`, string(jsonOut))
+	})
+
+	t.Run("empty URL marshals to empty", func(t *testing.T) {
+		u := SecretTemplateURL("")
+
+		yamlOut, err := yaml.Marshal(&u)
+		require.NoError(t, err)
+		require.YAMLEq(t, "null\n", string(yamlOut))
+
+		jsonOut, err := json.Marshal(&u)
+		require.NoError(t, err)
+		require.JSONEq(t, `""`, string(jsonOut))
+	})
+}
+
 func TestInhibitRuleEqual(t *testing.T) {
 	c, err := LoadFile("testdata/conf.inhibit-equal.yml")
 	require.NoError(t, err)
@@ -1489,4 +1768,67 @@ func TestInhibitRuleEqual(t *testing.T) {
 	require.Len(t, c.InhibitRules, 1)
 	r = c.InhibitRules[0]
 	require.Equal(t, []string{"qux🙂", "corge"}, r.Equal)
+}
+
+func TestGroupByEmptyOverride(t *testing.T) {
+	in := `
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'cluster']
+  routes:
+    - group_by: []
+
+receivers:
+  - name: 'default'
+`
+	cfg, err := Load(in)
+	require.NoError(t, err)
+	require.Len(t, cfg.Route.GroupBy, 2)
+	require.NotNil(t, cfg.Route.Routes[0].GroupBy)
+	require.Empty(t, cfg.Route.Routes[0].GroupBy)
+}
+
+func TestWechatNoAPIURL(t *testing.T) {
+	_, err := LoadFile("testdata/conf.wechat-no-api-secret.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.wechat-no-api-url.yml", err)
+	}
+	if err.Error() != "no global Wechat Api Secret set either inline or in a file" {
+		t.Errorf("Expected: %s\nGot: %s", "no global Wechat Api Secret set either inline or in a file", err.Error())
+	}
+}
+
+func TestWechatBothAPIURLAndFile(t *testing.T) {
+	_, err := LoadFile("testdata/conf.wechat-both-file-and-secret.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.wechat-both-file-and-secret.yml", err)
+	}
+	if err.Error() != "at most one of wechat_api_secret & wechat_api_secret_file must be configured" {
+		t.Errorf("Expected: %s\nGot: %s", "at most one of wechat_api_secret & wechat_api_secret_file must be configured", err.Error())
+	}
+}
+
+func TestWechatGlobalAPISecretFile(t *testing.T) {
+	conf, err := LoadFile("testdata/conf.wechat-default-api-secret-file.yml")
+	if err != nil {
+		t.Fatalf("Error parsing %s: %s", "testdata/conf.wechat-default-api-secret-file.yml", err)
+	}
+
+	// no override
+	firstConfig := conf.Receivers[0].WechatConfigs[0]
+	if firstConfig.APISecretFile != "/global_file" || string(firstConfig.APISecret) != "" {
+		t.Fatalf("Invalid Wechat API Secret file: %s\nExpected: %s", firstConfig.APISecretFile, "/global_file")
+	}
+
+	// override the file
+	secondConfig := conf.Receivers[0].WechatConfigs[1]
+	if secondConfig.APISecretFile != "/override_file" || string(secondConfig.APISecret) != "" {
+		t.Fatalf("Invalid Wechat API Secret file: %s\nExpected: %s", secondConfig.APISecretFile, "/override_file")
+	}
+
+	// override the global file with an inline URL
+	thirdConfig := conf.Receivers[0].WechatConfigs[2]
+	if string(thirdConfig.APISecret) != "my_inline_secret" || thirdConfig.APISecretFile != "" {
+		t.Fatalf("Invalid Wechat API Secret: %s\nExpected: %s", string(thirdConfig.APISecret), "my_inline_secret")
+	}
 }

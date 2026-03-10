@@ -8,7 +8,7 @@ jobs:
     name: Test alertmanager frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - run: make clean
       - run: make all
         working-directory: ./ui/app
@@ -23,8 +23,8 @@ jobs:
       matrix:
         thread: [0, 1, 2]
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v4.0.0
-      - uses: prometheus/promci@443c7fc2397e946bc9f5029e313a9c3441b9b86d # v0.4.7
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4.0.0
+      - uses: prometheus/promci@fc721ff8497a70a93a881cd552b71af7fb3a9d53 # v0.5.4
       - uses: ./.github/promci/actions/build
         with:
           promu_opts: "-p linux/amd64 -p windows/amd64 -p linux/arm64 -p darwin/amd64 -p darwin/arm64 -p linux/386"
@@ -37,10 +37,22 @@ jobs:
     # Whenever the Go version is updated here, .promu.yml
     # should also be updated.
     container:
+
       image: quay.io/prometheus/golang-builder:1.25-base
+    services:
+      maildev-noauth:
+        image: maildev/maildev:2.2.1
+      maildev-auth:
+        image: maildev/maildev:2.2.1
+        env:
+          MAILDEV_INCOMING_USER: user
+          MAILDEV_INCOMING_PASS: pass
+    env:
+      EMAIL_NO_AUTH_CONFIG: testdata/noauth.yml
+      EMAIL_AUTH_CONFIG: testdata/auth.yml
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: prometheus/promci@443c7fc2397e946bc9f5029e313a9c3441b9b86d # v0.4.7
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: prometheus/promci@fc721ff8497a70a93a881cd552b71af7fb3a9d53 # v0.5.4
       - uses: ./.github/promci/actions/setup_environment
       - run: make
       - run: git diff --exit-code

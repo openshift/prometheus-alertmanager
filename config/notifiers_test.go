@@ -46,7 +46,7 @@ func TestEmailHeadersCollision(t *testing.T) {
 to: 'to@email.com'
 headers:
   Subject: 'Alert'
-  subject: 'New Alert'
+  sUbject: 'New Alert'
 `
 	var cfg EmailConfig
 	err := yaml.UnmarshalStrict([]byte(in), &cfg)
@@ -179,13 +179,13 @@ service_key_file: 'xyz'
 func TestPagerdutyDetails(t *testing.T) {
 	tests := []struct {
 		in      string
-		checkFn func(map[string]string)
+		checkFn func(map[string]any)
 	}{
 		{
 			in: `
 routing_key: 'xyz'
 `,
-			checkFn: func(d map[string]string) {
+			checkFn: func(d map[string]any) {
 				if len(d) != 4 {
 					t.Errorf("expected 4 items, got: %d", len(d))
 				}
@@ -197,7 +197,7 @@ routing_key: 'xyz'
 details:
   key1: val1
 `,
-			checkFn: func(d map[string]string) {
+			checkFn: func(d map[string]any) {
 				if len(d) != 5 {
 					t.Errorf("expected 5 items, got: %d", len(d))
 				}
@@ -211,7 +211,7 @@ details:
   key2: val2
   firing: firing
 `,
-			checkFn: func(d map[string]string) {
+			checkFn: func(d map[string]any) {
 				if len(d) != 6 {
 					t.Errorf("expected 6 items, got: %d", len(d))
 				}
@@ -602,6 +602,53 @@ mrkdwn_in:
 			if rt.expected.MrkdwnIn[i] != cfg.MrkdwnIn[i] {
 				t.Errorf("\nexpected:\n%v\ngot:\n%v\nat index %v", rt.expected.MrkdwnIn[i], cfg.MrkdwnIn[i], i)
 			}
+		}
+	}
+}
+
+func TestSlackAuthMethodConfigValidation(t *testing.T) {
+	tests := []struct {
+		in          string
+		expectedErr string
+	}{
+		{
+			in: `
+api_url: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX'
+api_url_file: /slack_url
+`,
+			expectedErr: "at most one of api_url & api_url_file must be configured",
+		},
+		{
+			in: `
+app_token: 'xoxb-1234-abcdefgh'
+app_token_file: /slack_app_token
+`,
+			expectedErr: "at most one of app_token & app_token_file must be configured",
+		},
+		{
+			in: `
+app_token: 'xoxb-1234-abcdefgh'
+api_url: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX'
+`,
+			expectedErr: "at most one of api_url/api_url_file & app_token/app_token_file must be configured",
+		},
+	}
+
+	for _, rt := range tests {
+		var cfg SlackConfig
+		err := yaml.UnmarshalStrict([]byte(rt.in), &cfg)
+
+		// Check if an error occurred when it was NOT expected to.
+		if rt.expectedErr == "" && err != nil {
+			t.Fatalf("\nerror returned when none expected, error:\n%v", err)
+		}
+		// Check that an error occurred if one was expected to.
+		if rt.expectedErr != "" && err == nil {
+			t.Fatalf("\nno error returned, expected:\n%v", rt.expectedErr)
+		}
+		// Check that the error that occurred was what was expected.
+		if err != nil && err.Error() != rt.expectedErr {
+			t.Errorf("\nexpected:\n%v\ngot:\n%v", rt.expectedErr, err.Error())
 		}
 	}
 }
@@ -1053,14 +1100,6 @@ bot_token_file: /file
 			expected: errors.New("at most one of bot_token & bot_token_file must be configured"),
 		},
 		{
-			name: "with no bot_token & bot_token_file - it fails",
-			in: `
-bot_token: ''
-bot_token_file: ''
-`,
-			expected: errors.New("missing bot_token or bot_token_file on telegram_config"),
-		},
-		{
 			name: "with bot_token and chat_id set - it succeeds",
 			in: `
 bot_token: xyz
@@ -1083,11 +1122,27 @@ chat_id: 123
 `,
 		},
 		{
+			name: "with bot_token_file and chat_id_file set - it succeeds",
+			in: `
+bot_token_file: /file
+chat_id_file: /chat_id_file
+`,
+		},
+		{
 			name: "with no chat_id set - it fails",
 			in: `
 bot_token: xyz
 `,
-			expected: errors.New("missing chat_id on telegram_config"),
+			expected: errors.New("missing chat_id or chat_id_file on telegram_config"),
+		},
+		{
+			name: "with both chat_id and chat_id_file - it fails",
+			in: `
+bot_token: xyz
+chat_id: 123
+chat_id_file: /file
+`,
+			expected: errors.New("at most one of chat_id & chat_id_file must be configured"),
 		},
 		{
 			name: "with unknown parse_mode - it fails",
@@ -1112,4 +1167,171 @@ parse_mode: invalid
 
 func newBoolPointer(b bool) *bool {
 	return &b
+}
+
+func TestMattermostField_UnmarshalYAML(t *testing.T) {
+	mf := []struct {
+		name     string
+		in       string
+		expected error
+	}{
+		{
+			name: "with title, value and short - it succeeds",
+			in: `
+title: some title
+value: some value
+short: true
+`,
+		},
+		{
+			name: "with title and value - it succeeds",
+			in: `
+title: some title
+value: some value
+`,
+		},
+		{
+			name: "with no value - it fails",
+			in: `
+title: some title
+`,
+			expected: errors.New("missing value in Mattermost field configuration"),
+		},
+		{
+			name: "with no title - it fails",
+			in: `
+value: some value
+`,
+			expected: errors.New("missing title in Mattermost field configuration"),
+		},
+	}
+
+	for _, tt := range mf {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg MattermostField
+			err := yaml.UnmarshalStrict([]byte(tt.in), &cfg)
+
+			require.Equal(t, tt.expected, err)
+		})
+	}
+}
+
+func TestMattermostConfig_UnmarshalYAML(t *testing.T) {
+	mc := []struct {
+		name     string
+		in       string
+		expected error
+	}{
+		{
+			name: "with url and text - it succeeds",
+			in: `
+webhook_url: http://some.url
+channel: some_channel
+username: some_username
+text: some text
+`,
+		},
+		{
+			name: "with url_file, attachments and props - it succeeds",
+			in: `
+webhook_url_file: /some/url.file
+channel: some_channel
+username: some_username
+attachments:
+- text: some text
+props:
+  card: some text
+`,
+		},
+		{
+			name: "with url and url_file - it fails",
+			in: `
+webhook_url: http://some.url
+webhook_url_file: /some/url.file
+channel: some_channel
+username: some_username
+attachments:
+- text: some text
+`,
+			expected: errors.New("at most one of webhook_url & webhook_url_file must be configured"),
+		},
+		{
+			name: "with text and attachments - it succeeds",
+			in: `
+webhook_url: http://some.url
+channel: some_channel
+username: some_username
+text: some text
+attachments:
+- text: some text
+`,
+		},
+	}
+
+	for _, tt := range mc {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg MattermostConfig
+			err := yaml.UnmarshalStrict([]byte(tt.in), &cfg)
+
+			require.Equal(t, tt.expected, err)
+		})
+	}
+}
+
+func TestEmailConfig_UnmarshalYAML(t *testing.T) {
+	testConfig := []struct {
+		name     string
+		in       string
+		expected error
+	}{
+		{
+			name: "with basic config - it succeeds",
+			in: `
+to: foobar@example.com
+headers: {X-Custom-Header: CustomValue}
+`,
+		},
+		{
+			name: "with empty to address - it fails",
+			in: `
+to: ''`,
+			expected: errors.New("missing to address in email config"),
+		},
+		{
+			name: "with correct threading - it succeeds",
+			in: `
+to: foobar@example.com
+threading:
+  enabled: true
+  thread_by_date: daily
+`,
+		},
+		{
+			name: "with invalid threading - it fails",
+			in: `
+to: foobar@example.com
+threading:
+  enabled: true
+  thread_by_date: weekly
+`,
+			expected: errors.New("threading.thread_by_date must be either 'none' or 'daily'"),
+		},
+		{
+			name: "with duplicate headers - it failes",
+			in: `
+to: foobar@example.com
+headers: {X-Custom-Header: CustomValue, X-CUSTOM-HEADER: AnotherValue}
+`,
+			expected: errors.New("duplicate header \"X-Custom-Header\" in email config"),
+		},
+	}
+
+	for _, tt := range testConfig {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg EmailConfig
+			err := yaml.UnmarshalStrict([]byte(tt.in), &cfg)
+
+			require.Equal(t, tt.expected, err)
+		})
+	}
 }

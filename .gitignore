@@ -20,7 +20,9 @@
 !/.promu.yml
 !/api/v2/openapi.yaml
 !.github/workflows/*.yml
+<<<<<<< HEAD
 
 # Include CI/build configuration files in vendor directory
 !vendor/**/*.yml
 !vendor/**/*.yaml
+!.github/ISSUE_TEMPLATE/*.yml
