@@ -1,6 +1,7 @@
 dist/
 elm-stuff/
-script.js
 .elm
 /elm-*
-/openapi-*
+/build
+/node_modules/
+/.build_stamp
