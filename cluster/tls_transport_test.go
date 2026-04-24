@@ -89,6 +89,10 @@ func TestNewTLSTransport(t *testing.T) {
 			tlsConfFile: "testdata/tls_config_with_missing_client.yml",
 			bindAddr:    localhost,
 		},
+		{
+			tlsConfFile: "testdata/tls_config_with_null_client.yml",
+			err:         "missing 'tls_client_config' entry in the TLS configuration",
+		},
 	} {
 		t.Run("", func(t *testing.T) {
 			transport, err := newTLSTransport(tc.tlsConfFile, tc.bindAddr, tc.bindPort)
@@ -210,11 +214,9 @@ func TestDialTimeout(t *testing.T) {
 
 	var to net.Conn
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		to = <-t2.StreamCh()
-		wg.Done()
-	}()
+	})
 
 	sent := []byte(("test stream"))
 	m, err := from.Write(sent)

@@ -667,7 +667,8 @@ func TestDispatcherRace(t *testing.T) {
 	defer alerts.Close()
 
 	timeout := func(d time.Duration) time.Duration { return time.Duration(0) }
-	dispatcher := NewDispatcher(alerts, nil, nil, marker, timeout, testMaintenanceInterval, nil, logger, NewDispatcherMetrics(false, reg))
+	route := &Route{}
+	dispatcher := NewDispatcher(alerts, route, nil, marker, timeout, testMaintenanceInterval, nil, logger, NewDispatcherMetrics(false, reg))
 	go dispatcher.Run(time.Now())
 	dispatcher.Stop()
 }
@@ -743,20 +744,46 @@ func TestDispatcher_DoMaintenance(t *testing.T) {
 			GroupWait:     0,
 			GroupInterval: 5 * time.Minute, // Should never hit in this test.
 		},
+		Idx: 0,
 	}
 	timeout := func(d time.Duration) time.Duration { return d }
 	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}
 
 	ctx := context.Background()
 	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, testMaintenanceInterval, nil, promslog.NewNopLogger(), NewDispatcherMetrics(false, r))
-	aggrGroups := make(map[*Route]map[model.Fingerprint]*aggrGroup)
-	aggrGroups[route] = make(map[model.Fingerprint]*aggrGroup)
+	// Manually create the routeAggrGroups structure since we are not calling Run().
+	dispatcher.routeGroupsSlice = make([]routeAggrGroups, route.Idx+1)
+	dispatcher.routeGroupsSlice[route.Idx] = routeAggrGroups{
+		route: route,
+	}
 
-	// Insert an aggregation group with no alerts.
+	// Insert an aggregation group with one resolved alert.
 	labels := model.LabelSet{"alertname": "1"}
 	aggrGroup1 := newAggrGroup(ctx, labels, route, timeout, types.NewMarker(prometheus.NewRegistry()), promslog.NewNopLogger())
-	aggrGroups[route][aggrGroup1.fingerprint()] = aggrGroup1
-	dispatcher.aggrGroupsPerRoute = aggrGroups
+	dispatcher.routeGroupsSlice[route.Idx].groups.Store(aggrGroup1.fingerprint(), aggrGroup1)
+
+	// Add a resolved alert
+	resolvedAlert := &types.Alert{
+		Alert: model.Alert{
+			Labels:   labels,
+			StartsAt: time.Now().Add(-2 * time.Hour),
+			EndsAt:   time.Now().Add(-1 * time.Hour), // Already resolved
+		},
+		UpdatedAt: time.Now().Add(-1 * time.Hour),
+	}
+	aggrGroup1.alerts.Set(resolvedAlert)
+
+	// Flush will detect the resolved alert and delete it via DeleteIfNotModified
+	// This is the actual production code path
+	notified := false
+	aggrGroup1.flush(func(alerts ...*types.Alert) bool {
+		require.Len(t, alerts, 1)
+		require.Equal(t, labels, alerts[0].Labels)
+		notified = true
+		return true // Simulate successful notification
+	})
+	require.True(t, notified, "flush should have called notify function")
+
 	// Must run otherwise doMaintenance blocks on aggrGroup1.stop().
 	go aggrGroup1.run(func(context.Context, ...*types.Alert) bool { return true })
 
@@ -823,8 +850,8 @@ func TestDispatcher_DeleteResolvedAlertsFromMarker(t *testing.T) {
 		ag.insert(ctx, resolvedAlert)
 
 		// Set markers for both alerts
-		marker.SetActiveOrSilenced(activeAlert.Fingerprint(), 0, nil, nil)
-		marker.SetActiveOrSilenced(resolvedAlert.Fingerprint(), 0, nil, nil)
+		marker.SetActiveOrSilenced(activeAlert.Fingerprint(), nil)
+		marker.SetActiveOrSilenced(resolvedAlert.Fingerprint(), nil)
 
 		// Verify markers exist before flush
 		require.True(t, marker.Active(activeAlert.Fingerprint()))
@@ -880,7 +907,7 @@ func TestDispatcher_DeleteResolvedAlertsFromMarker(t *testing.T) {
 		ag.insert(ctx, resolvedAlert)
 
 		// Set marker for the alert
-		marker.SetActiveOrSilenced(resolvedAlert.Fingerprint(), 0, nil, nil)
+		marker.SetActiveOrSilenced(resolvedAlert.Fingerprint(), nil)
 
 		// Verify marker exists before flush
 		require.True(t, marker.Active(resolvedAlert.Fingerprint()))
@@ -934,7 +961,7 @@ func TestDispatcher_DeleteResolvedAlertsFromMarker(t *testing.T) {
 		ag.insert(ctx, resolvedAlert)
 
 		// Set marker for the alert
-		marker.SetActiveOrSilenced(resolvedAlert.Fingerprint(), 0, nil, nil)
+		marker.SetActiveOrSilenced(resolvedAlert.Fingerprint(), nil)
 
 		// Verify marker exists before flush
 		require.True(t, marker.Active(resolvedAlert.Fingerprint()))
@@ -1058,4 +1085,101 @@ func TestDispatchOnStartup(t *testing.T) {
 	}
 	require.True(t, fingerprints[alert1.Fingerprint()], "expected alert1 to be present")
 	require.True(t, fingerprints[alert2.Fingerprint()], "expected alert2 to be present")
+}
+
+func TestGetGroupLabels(t *testing.T) {
+	alert := &types.Alert{
+		Alert: model.Alert{
+			Labels: model.LabelSet{
+				"alertname": "TestAlert",
+				"job":       "prometheus",
+				"instance":  "localhost:9090",
+				"severity":  "critical",
+			},
+		},
+	}
+
+	t.Run("specific labels", func(t *testing.T) {
+		route := &Route{
+			RouteOpts: RouteOpts{
+				GroupBy: map[model.LabelName]struct{}{
+					"alertname": {},
+					"job":       {},
+				},
+			},
+		}
+		labels := getGroupLabels(alert, route)
+		require.Len(t, labels, 2)
+		require.Equal(t, model.LabelValue("TestAlert"), labels["alertname"])
+		require.Equal(t, model.LabelValue("prometheus"), labels["job"])
+	})
+
+	t.Run("group by all", func(t *testing.T) {
+		route := &Route{
+			RouteOpts: RouteOpts{
+				GroupByAll: true,
+			},
+		}
+		labels := getGroupLabels(alert, route)
+		require.Len(t, labels, 4)
+		require.Equal(t, alert.Labels, labels)
+	})
+}
+
+func BenchmarkGetGroupLabels(b *testing.B) {
+	now := time.Now()
+
+	// Alert with many labels (typical production alert)
+	alert := &types.Alert{
+		Alert: model.Alert{
+			Labels: model.LabelSet{
+				"alertname":  "TestAlert",
+				"severity":   "critical",
+				"job":        "prometheus",
+				"instance":   "localhost:9090",
+				"namespace":  "monitoring",
+				"cluster":    "prod-us-east-1",
+				"datacenter": "dc1",
+				"env":        "production",
+				"team":       "platform",
+				"service":    "alertmanager",
+			},
+			StartsAt: now.Add(-time.Hour),
+			EndsAt:   now.Add(time.Hour),
+		},
+	}
+
+	b.Run("specific_labels", func(b *testing.B) {
+		route := &Route{
+			RouteOpts: RouteOpts{
+				GroupBy: map[model.LabelName]struct{}{
+					"alertname": {},
+					"job":       {},
+					"severity":  {},
+				},
+			},
+		}
+
+		b.ResetTimer()
+		b.ReportAllocs()
+
+		for i := 0; i < b.N; i++ {
+			_ = getGroupLabels(alert, route)
+		}
+	})
+
+	b.Run("group_by_all", func(b *testing.B) {
+		route := &Route{
+			RouteOpts: RouteOpts{
+				GroupByAll: true,
+			},
+		}
+
+		b.ResetTimer()
+		b.ReportAllocs()
+
+		for i := 0; i < b.N; i++ {
+			_ = getGroupLabels(alert, route)
+		}
+	})
 }

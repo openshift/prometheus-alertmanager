@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,8 @@ import (
 	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
+
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
@@ -55,7 +58,7 @@ receivers:
 	require.Len(t, c.Receivers[0].TelegramConfigs, 1)
 
 	require.Equal(t, "https://api.telegram.org", c.Receivers[0].TelegramConfigs[0].APIUrl.String())
-	require.Equal(t, config.Secret("secret"), c.Receivers[0].TelegramConfigs[0].BotToken)
+	require.Equal(t, commoncfg.Secret("secret"), c.Receivers[0].TelegramConfigs[0].BotToken)
 	require.Equal(t, int64(1234), c.Receivers[0].TelegramConfigs[0].ChatID)
 	require.Equal(t, 1357, c.Receivers[0].TelegramConfigs[0].MessageThreadID)
 	require.Equal(t, "HTML", c.Receivers[0].TelegramConfigs[0].ParseMode)
@@ -63,7 +66,7 @@ receivers:
 
 func TestTelegramRetry(t *testing.T) {
 	// Fake url for testing purposes
-	fakeURL := config.URL{
+	fakeURL := amcommoncfg.URL{
 		URL: &url.URL{
 			Scheme: "https",
 			Host:   "FAKE_API",
@@ -103,7 +106,7 @@ func TestTelegramNotify(t *testing.T) {
 			cfg: config.TelegramConfig{
 				Message:    "<code>x < y</code>",
 				HTTPConfig: &commoncfg.HTTPClientConfig{},
-				BotToken:   config.Secret(token),
+				BotToken:   commoncfg.Secret(token),
 			},
 			expText: "<code>x < y</code>",
 		},
@@ -113,7 +116,7 @@ func TestTelegramNotify(t *testing.T) {
 				ParseMode:  "HTML",
 				Message:    "<code>x < y</code>",
 				HTTPConfig: &commoncfg.HTTPClientConfig{},
-				BotToken:   config.Secret(token),
+				BotToken:   commoncfg.Secret(token),
 			},
 			expText: "<code>x &lt; y</code>",
 		},
@@ -125,6 +128,45 @@ func TestTelegramNotify(t *testing.T) {
 				BotTokenFile: fileWithToken.Name(),
 			},
 			expText: "test",
+		},
+		{
+			name: "HTML mode with too-large message",
+			cfg: config.TelegramConfig{
+				ParseMode:  "HTML",
+				Message:    strings.Repeat("x", 5000),
+				HTTPConfig: &commoncfg.HTTPClientConfig{},
+				BotToken:   commoncfg.Secret(token),
+			},
+			expText: `Alertmanager notification could not be sent: message length exceeds Telegram limits.
+			Please check the template used for producing the message content.`,
+		},
+		{
+			name: "Default mode with too-large message",
+			cfg: config.TelegramConfig{
+				Message:    strings.Repeat("y", 5000),
+				HTTPConfig: &commoncfg.HTTPClientConfig{},
+				BotToken:   commoncfg.Secret(token),
+			},
+			expText: strings.Repeat("y", maxMessageLenRunes-1) + "…",
+		},
+		{
+			name: "HTML mode with message smaller than limit",
+			cfg: config.TelegramConfig{
+				ParseMode:  "HTML",
+				Message:    strings.Repeat("a", 100),
+				HTTPConfig: &commoncfg.HTTPClientConfig{},
+				BotToken:   commoncfg.Secret(token),
+			},
+			expText: strings.Repeat("a", 100),
+		},
+		{
+			name: "Default mode with message smaller than limit",
+			cfg: config.TelegramConfig{
+				Message:    strings.Repeat("b", 100),
+				HTTPConfig: &commoncfg.HTTPClientConfig{},
+				BotToken:   commoncfg.Secret(token),
+			},
+			expText: strings.Repeat("b", 100),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -139,7 +181,7 @@ func TestTelegramNotify(t *testing.T) {
 			defer srv.Close()
 			u, _ := url.Parse(srv.URL)
 
-			tc.cfg.APIUrl = &config.URL{URL: u}
+			tc.cfg.APIUrl = &amcommoncfg.URL{URL: u}
 
 			notifier, err := New(&tc.cfg, test.CreateTmpl(t), promslog.NewNopLogger())
 			require.NoError(t, err)

@@ -1,6 +1,11 @@
-dist/
+# NOTE(simonpasquier): unlike upstream, we commit the generated frontend assets
+# into Git because the build pipeline can't easily pull dependencies from the
+# Internet + we want to ensure reproducible builds. This is the reason why the
+# dist/ entry below is commented.
+# dist/
 elm-stuff/
-script.js
 .elm
 /elm-*
-/openapi-*
+/build
+/node_modules/
+/.build_stamp

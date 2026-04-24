@@ -150,13 +150,14 @@ func TestData(t *testing.T) {
 		{
 			receiver: "webhook",
 			exp: &Data{
-				Receiver:          "webhook",
-				Status:            "resolved",
-				Alerts:            Alerts{},
-				GroupLabels:       KV{},
-				CommonLabels:      KV{},
-				CommonAnnotations: KV{},
-				ExternalURL:       u.String(),
+				Receiver:           "webhook",
+				Status:             "resolved",
+				Alerts:             Alerts{},
+				NotificationReason: "first notification",
+				GroupLabels:        KV{},
+				CommonLabels:       KV{},
+				CommonAnnotations:  KV{},
+				ExternalURL:        u.String(),
 			},
 		},
 		{
@@ -213,10 +214,11 @@ func TestData(t *testing.T) {
 						Fingerprint: "3b15fd163d36582e",
 					},
 				},
-				GroupLabels:       KV{"job": "foo"},
-				CommonLabels:      KV{"job": "foo"},
-				CommonAnnotations: KV{"runbook": "foo"},
-				ExternalURL:       u.String(),
+				NotificationReason: "first notification",
+				GroupLabels:        KV{"job": "foo"},
+				CommonLabels:       KV{"job": "foo"},
+				CommonAnnotations:  KV{"runbook": "foo"},
+				ExternalURL:        u.String(),
 			},
 		},
 		{
@@ -271,15 +273,16 @@ func TestData(t *testing.T) {
 						Fingerprint: "c7e68cb08e3e67f9",
 					},
 				},
-				GroupLabels:       KV{},
-				CommonLabels:      KV{},
-				CommonAnnotations: KV{},
-				ExternalURL:       u.String(),
+				NotificationReason: "first notification",
+				GroupLabels:        KV{},
+				CommonLabels:       KV{},
+				CommonAnnotations:  KV{},
+				ExternalURL:        u.String(),
 			},
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			got := tmpl.Data(tc.receiver, tc.groupLabels, tc.alerts...)
+			got := tmpl.Data(tc.receiver, tc.groupLabels, "first notification", tc.alerts...)
 			require.Equal(t, tc.exp, got)
 		})
 	}
@@ -459,6 +462,52 @@ func TestTemplateExpansion(t *testing.T) {
 				},
 			},
 			exp: `[{"status":"firing","labels":null,"annotations":null,"startsAt":"0001-01-01T00:00:00Z","endsAt":"0001-01-01T00:00:00Z","generatorURL":"","fingerprint":""}]`,
+		},
+		{
+			title: "Template creates empty dict when using dict on nil",
+			in:    `{{- $test := dict -}}{{ $test }}`,
+			exp:   "map[]",
+		},
+		{
+			title: "Template creates dict with args",
+			in:    `{{- $test := dict "a" 1 "b" 2 "c" 3 -}}{{ $test }}`,
+			exp:   "map[a:1 b:2 c:3]",
+		},
+		{
+			title: "Template using dict with odd number of arguments",
+			in:    `{{ dict "a" }}`,
+			fail:  true,
+		},
+		{
+			title: "Template using dict with non-string key",
+			in:    `{{ dict 1 "value" }}`,
+			fail:  true,
+		},
+		{
+			title: "Template creates empty list when using list on nil",
+			in:    `{{- $test := list -}}{{ $test }}`,
+			exp:   "[]",
+		},
+		{
+			title: "Template creates list with args",
+			in:    `{{- $test := list "a" "b" "c" -}}{{ $test }}`,
+			exp:   "[a b c]",
+		},
+		{
+			title: "Template appends to list",
+			in:    `{{- $test := list "a" "b" -}}{{ $test = append $test "c" "d" -}}{{ $test }}`,
+			exp:   "[a b c d]",
+		},
+		{
+			title: "Compose json array using list and append",
+			data: Data{
+				Alerts: Alerts{
+					{Status: "firing"},
+					{Status: "resolved"},
+				},
+			},
+			in:  `{{- $newList := list -}}{{ range .Alerts }}{{ $m := dict "status" .Status "labels" .Labels }}{{ $newList = append $newList $m }}{{ end }}{{ toJson $newList }}`,
+			exp: `[{"labels":null,"status":"firing"},{"labels":null,"status":"resolved"}]`,
 		},
 	} {
 		t.Run(tc.title, func(t *testing.T) {
@@ -657,9 +706,7 @@ func TestTemplateFuncs(t *testing.T) {
 		t.Run(tc.title, func(t *testing.T) {
 			wg := sync.WaitGroup{}
 			for range 10 {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					got, err := tmpl.ExecuteTextString(tc.in, tc.data)
 					if tc.expErr == "" {
 						require.NoError(t, err)
@@ -668,7 +715,7 @@ func TestTemplateFuncs(t *testing.T) {
 						require.EqualError(t, err, tc.expErr)
 						require.Empty(t, got)
 					}
-				}()
+				})
 			}
 			wg.Wait()
 		})
@@ -736,4 +783,60 @@ func TestDeepCopyWithTemplate(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func BenchmarkTemplateData(b *testing.B) {
+	u, _ := url.Parse("http://example.com/")
+	tmpl := &Template{ExternalURL: u}
+
+	now := time.Now()
+	alerts := make([]*types.Alert, 50)
+	for i := range alerts {
+		alerts[i] = &types.Alert{
+			Alert: model.Alert{
+				Labels:      model.LabelSet{"alertname": "test", "job": "bench"},
+				Annotations: model.LabelSet{"summary": "test alert"},
+				StartsAt:    now,
+				EndsAt:      now.Add(time.Hour),
+			},
+		}
+	}
+	groupLabels := model.LabelSet{"alertname": "test"}
+
+	b.ResetTimer()
+	for b.Loop() {
+		tmpl.Data("receiver", groupLabels, "firing", alerts...)
+	}
+}
+
+func BenchmarkTypesAlerts(b *testing.B) {
+	now := time.Now()
+	alerts := make([]*types.Alert, 50)
+	for i := range alerts {
+		alerts[i] = &types.Alert{
+			Alert: model.Alert{
+				Labels:      model.LabelSet{"alertname": "test", "job": "bench"},
+				Annotations: model.LabelSet{"summary": "test alert"},
+				StartsAt:    now,
+				EndsAt:      now.Add(time.Hour),
+			},
+		}
+	}
+
+	b.Run("SingleCall", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			typed := types.Alerts(alerts...)
+			_ = typed.Status()
+			for range typed {
+			}
+		}
+	})
+
+	b.Run("DuplicateCall", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = types.Alerts(alerts...).Status()
+			for range types.Alerts(alerts...) {
+			}
+		}
+	})
 }

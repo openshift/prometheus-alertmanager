@@ -1,4 +1,4 @@
-// Copyright 2019 Prometheus Team
+// Copyright The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -31,6 +31,8 @@ import (
 	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
+
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
@@ -60,7 +62,7 @@ func TestSlackRedactedURL(t *testing.T) {
 
 	notifier, err := New(
 		&config.SlackConfig{
-			APIURL:     &config.SecretURL{URL: u},
+			APIURL:     &amcommoncfg.SecretURL{URL: u},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
 		test.CreateTmpl(t),
@@ -195,9 +197,9 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 			apiurl, _ := url.Parse("https://slack.com/post.Message")
 			notifier, err := New(
 				&config.SlackConfig{
-					NotifierConfig: config.NotifierConfig{},
+					NotifierConfig: amcommoncfg.NotifierConfig{},
 					HTTPConfig:     &commoncfg.HTTPClientConfig{},
-					APIURL:         &config.SecretURL{URL: apiurl},
+					APIURL:         &amcommoncfg.SecretURL{URL: apiurl},
 					Channel:        "channelname",
 				},
 				test.CreateTmpl(t),
@@ -253,9 +255,9 @@ func TestSlackTimeout(t *testing.T) {
 			u, _ := url.Parse("https://slack.com/post.Message")
 			notifier, err := New(
 				&config.SlackConfig{
-					NotifierConfig: config.NotifierConfig{},
+					NotifierConfig: amcommoncfg.NotifierConfig{},
 					HTTPConfig:     &commoncfg.HTTPClientConfig{},
-					APIURL:         &config.SecretURL{URL: u},
+					APIURL:         &amcommoncfg.SecretURL{URL: u},
 					Channel:        "channelname",
 					Timeout:        tt.timeout,
 				},
@@ -324,7 +326,7 @@ func TestSlackMessageField(t *testing.T) {
 	// 4. Configure Notifier with BOTH new and old fields
 	u, _ := url.Parse(server.URL)
 	conf := &config.SlackConfig{
-		APIURL:      &config.SecretURL{URL: u},
+		APIURL:      &amcommoncfg.SecretURL{URL: u},
 		MessageText: "My Top Level Message", // Your NEW field
 		Title:       "Old Attachment Title", // An OLD field
 		Channel:     "#test-channel",
