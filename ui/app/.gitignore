@@ -3,6 +3,7 @@
 # Internet + we want to ensure reproducible builds. This is the reason why the
 # dist/ entry below is commented.
 # dist/
+ui/app/dist/.build_stamp
 elm-stuff/
 .elm
 /elm-*
