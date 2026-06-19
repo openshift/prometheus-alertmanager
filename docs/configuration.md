@@ -166,6 +166,14 @@ mute_time_intervals:
 # A list of time intervals for muting/activating routes.
 time_intervals:
   [ - <time_interval> ... ]
+
+# Optional event recorder configuration.  Captures significant
+# Alertmanager events (startup/shutdown, alert lifecycle, silences,
+# notifications) and ships them to one or more outputs (file, webhook,
+# kafka).  Recording is gated behind the `event-recorder` feature flag;
+# pass `--enable-feature=event-recorder` on the command line to
+# activate it.  See the Event Recorder section below.
+[ event_recorder: <event_recorder_config> ]
 ```
 
 ## Route-related settings
@@ -633,6 +641,30 @@ Unquoted literals can contain all UTF-8 characters other than the reserved chara
 
 Double-quoted strings can contain all UTF-8 characters. Unlike unquoted literals, there are no reserved characters. However, literal double quotes and backslashes must be escaped with a single backslash. For example, to match the regular expression `\d+` the backslash must be escaped `"\\d+"`. This is because double-quoted strings follow the same rules as Go's [string literals](https://go.dev/ref/spec#String_literals). Double-quoted strings also support UTF-8 code points. For example, `"foo!"`, `"bar,baz"`, `"\"baz qux\""` and `"\xf0\x9f\x99\x82"`.
 
+
+> **Note: YAML quoting vs. matcher token quoting**
+>
+> Each entry in a `matchers:` list is a single YAML string that Alertmanager
+> parses after the YAML file has been processed. YAML quoting applies to the
+> *entire* matcher string — it does not parse or protect individual tokens
+> within it. The double-quoting described above is handled by Alertmanager's own
+> parser after YAML has already processed the input.
+>
+> - **[Plain style](https://yaml.org/spec/1.2.2/#plain-style)** (no surrounding quotes): works when the matcher contains no
+>   YAML special characters (`{`, `}`, `[`, `]`, `,`, `#`, `|`, `>`, `:`).
+>   Example: `env !~ preprod`
+> - **[Single-quoted style](https://yaml.org/spec/1.2.2/#single-quoted-style)**: protects against all YAML special
+>   characters and allows literal double quotes inside the matcher.
+>   Example: `'env =~ "prod|staging"'`
+> - **[Double-quoted style](https://yaml.org/spec/1.2.2/#double-quoted-style)**: supports YAML escape sequences; literal double quotes
+>   inside the value must be escaped as `\"`.
+>   Example: `"env !~ \"uat\""`
+>
+> Writing `env =~ "prod"` without surrounding YAML quotes is valid plain-style
+> YAML. The inner double quotes are stripped by Alertmanager's parser and provide
+> **no** protection against YAML special characters. Always quote the entire
+> matcher at the YAML level when the value may contain special characters.
+
 #### Classic matchers
 
 A classic matcher is a string with a syntax inspired by PromQL and OpenMetrics. The syntax of a classic matcher consists of three tokens:
@@ -755,6 +787,10 @@ Note: As part of lifting the past moratorium on new receivers it was agreed that
 ```yaml
 # The unique name of the receiver.
 name: <string>
+
+# Labels attached to this receiver for querying and filtering.
+labels:
+  [ <labelname>: <labelvalue>, ... ]
 
 # Configurations for several notification integrations.
 discord_configs:
@@ -1746,6 +1782,19 @@ attributes:
 
 # The HTTP client's configuration.
 [ http_config: <http_config> | default = global.http_config ]
+
+# Force the AWS SDK's HTTP client (BuildableClient) instead of the default
+# tracing-wrapped client. Required when the AWS SDK needs to inject a custom
+# CA bundle (e.g. via `ca_bundle` in the AWS shared config). Auto-enabled
+# when the AWS_CA_BUNDLE environment variable is set.
+#
+# When this flag is set tracing is disabled for SNS requests, and only the
+# `tls_config` and proxy fields of `http_config` are honored. Other
+# `http_config` knobs (basic_auth, oauth2, authorization, follow_redirects,
+# enable_http2, http_headers) are silently ignored — most are irrelevant for
+# AWS calls (which use SigV4) but if you depend on them for SNS, do not enable
+# this.
+[ use_aws_http_client: <boolean> | default = false ]
 ```
 
 #### `<sigv4_config>` (SNS)
@@ -2031,4 +2080,128 @@ room_id: <tmpl_string>
 
 # The tracing timeout.
 [ timeout: <duration> | default = 0s ]
+```
+
+## Event Recorder
+
+The event recorder captures significant Alertmanager events (process start
+and shutdown, alert lifecycle transitions, silence creation, notification
+delivery, and mute/inhibit suppressions) and fans them out to one or more
+destinations.  Each event is encoded as a structured payload that includes
+a timestamp, the producing instance's hostname, the cluster position (when
+HA clustering is enabled), and the event-specific data.
+
+The recorder is gated behind the `event-recorder` feature flag — pass
+`--enable-feature=event-recorder` on the command line to activate it.
+When the flag is not set, the recorder silently discards all events.
+
+Event recording is configured under the top-level `event_recorder` key.
+
+### `<event_recorder_config>`
+
+Outputs are grouped by type, one list per destination kind (mirroring the
+way receivers group their integrations).  Every recorded event is sent to
+every output across all lists.
+
+```yaml
+# JSONL file outputs.
+file_outputs:
+  [ - <file_output> ... ]
+
+# Webhook outputs.
+webhook_outputs:
+  [ - <webhook_output> ... ]
+
+# Kafka outputs.
+kafka_outputs:
+  [ - <kafka_output> ... ]
+```
+
+#### `<file_output>`
+
+Writes each event as a single JSON line to a file.  The file is reopened
+when the parent directory observes a rename/remove/create on the target
+path (for compatibility with `logrotate` and similar tools).
+
+```yaml
+# Path to the JSONL output file.  Will be created if it does not exist.
+path: <filepath>
+```
+
+#### `<webhook_output>`
+
+POSTs each event as a JSON body to an HTTP endpoint.  Delivery is
+performed by a bounded worker pool with bounded retries and exponential
+backoff.
+
+```yaml
+# URL to POST events to.
+url: <secret>
+
+# HTTP client configuration (TLS, basic auth, OAuth, proxies, ...).
+[ http_config: <http_config> ]
+
+# HTTP request timeout.
+[ timeout: <duration> | default = 10s ]
+
+# Number of concurrent delivery workers.
+[ workers: <int> | default = 4 ]
+
+# Maximum number of delivery attempts per event.
+[ max_retries: <int> | default = 3 ]
+
+# Base backoff between retries; subsequent attempts use exponential
+# backoff (base * 2^attempt) capped at 30s.
+[ retry_backoff: <duration> | default = 500ms ]
+```
+
+#### `<kafka_output>`
+
+Produces each event to a Kafka topic.  Records use the producing
+Alertmanager instance's hostname as the message key, which keeps all
+events from a single instance on the same partition and preserves their
+relative ordering.  Delivery is asynchronous and bounded: when the local
+buffer is full, events are dropped.
+
+A failure to reach the Kafka brokers at startup is logged at warn level
+but does **not** prevent Alertmanager from starting; the underlying
+client retries connections in the background.
+
+The target topic must already exist (or the brokers must be configured to
+auto-create topics); Alertmanager does not create it.
+
+```yaml
+# Seed broker list (host:port).  At least one entry is required.
+brokers:
+  [ - <string> ... ]
+
+# Topic to produce events to.
+topic: <string>
+
+# Client identifier reported to the brokers.
+[ client_id: <string> | default = "alertmanager" ]
+
+# On-the-wire encoding for each record value: "json" (protojson) or
+# "protobuf" (binary proto).  JSON is the default for symmetry with the
+# file and webhook outputs; consumers that already use the
+# eventrecorder.proto schema may prefer protobuf for compactness.
+[ format: <"json" | "protobuf"> | default = "json" ]
+
+# Producer acknowledgement level.  "leader" matches the franz-go default
+# and minimizes Alertmanager's exposure to Kafka latency.  "all" enables
+# the idempotent producer for at-least-once durability at the cost of
+# higher latency.
+[ acks: <"none" | "leader" | "all"> | default = "leader" ]
+
+# Compression codec for record batches.  When omitted, batches are sent
+# uncompressed.
+[ compression: <"none" | "gzip" | "snappy" | "lz4" | "zstd"> ]
+
+# Capacity of the local buffer between the event recorder and franz-go.
+# Events are dropped when this buffer is full.
+[ buffer_size: <int> | default = 1024 ]
+
+# TLS configuration for the broker connection.  When unset, the
+# connection uses PLAINTEXT.
+[ tls_config: <tls_config> ]
 ```
