@@ -13,6 +13,7 @@ build:
     tags:
         all:
             - netgo
+            - timetzdata
         windows: []
     ldflags: |
         -X github.com/prometheus/common/version.Version={{.Version}}
