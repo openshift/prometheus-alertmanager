@@ -270,8 +270,8 @@ github.com/gogo/protobuf/vanity/command
 # github.com/golang/protobuf v1.5.3
 ## explicit; go 1.9
 github.com/golang/protobuf/proto
-# github.com/google/btree v1.0.0
-## explicit
+# github.com/google/btree v1.1.3
+## explicit; go 1.18
 github.com/google/btree
 # github.com/google/uuid v1.6.0
 ## explicit
@@ -286,11 +286,11 @@ github.com/hashicorp/go-immutable-radix
 ## explicit; go 1.12
 github.com/hashicorp/go-metrics
 github.com/hashicorp/go-metrics/compat
-# github.com/hashicorp/go-msgpack/v2 v2.1.1
-## explicit; go 1.19
+# github.com/hashicorp/go-msgpack/v2 v2.1.5
+## explicit; go 1.24.0
 github.com/hashicorp/go-msgpack/v2/codec
-# github.com/hashicorp/go-multierror v1.1.0
-## explicit; go 1.14
+# github.com/hashicorp/go-multierror v1.1.1
+## explicit; go 1.13
 github.com/hashicorp/go-multierror
 # github.com/hashicorp/go-sockaddr v1.0.7
 ## explicit; go 1.19
@@ -303,8 +303,8 @@ github.com/hashicorp/golang-lru/simplelru
 github.com/hashicorp/golang-lru/v2
 github.com/hashicorp/golang-lru/v2/internal
 github.com/hashicorp/golang-lru/v2/simplelru
-# github.com/hashicorp/memberlist v0.5.3
-## explicit; go 1.20
+# github.com/hashicorp/memberlist v0.5.3 => github.com/openshift-sustaining/memberlist v0.5.4-sec.1
+## explicit; go 1.24.0
 github.com/hashicorp/memberlist
 # github.com/jessevdk/go-flags v1.6.1
 ## explicit; go 1.20
@@ -328,8 +328,8 @@ github.com/mdlayher/socket
 # github.com/mdlayher/vsock v1.2.1
 ## explicit; go 1.20
 github.com/mdlayher/vsock
-# github.com/miekg/dns v1.1.41
-## explicit; go 1.13
+# github.com/miekg/dns v1.1.68
+## explicit; go 1.23.0
 github.com/miekg/dns
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
@@ -468,7 +468,7 @@ go.yaml.in/yaml/v2
 # go.yaml.in/yaml/v3 v3.0.4
 ## explicit; go 1.16
 go.yaml.in/yaml/v3
-# golang.org/x/crypto v0.43.0
+# golang.org/x/crypto v0.44.0
 ## explicit; go 1.24.0
 golang.org/x/crypto/bcrypt
 golang.org/x/crypto/blowfish
@@ -477,7 +477,7 @@ golang.org/x/crypto/blowfish
 golang.org/x/mod/internal/lazyregexp
 golang.org/x/mod/module
 golang.org/x/mod/semver
-# golang.org/x/net v0.46.0
+# golang.org/x/net v0.47.0
 ## explicit; go 1.24.0
 golang.org/x/net/bpf
 golang.org/x/net/http/httpguts
@@ -498,10 +498,10 @@ golang.org/x/net/trace
 golang.org/x/oauth2
 golang.org/x/oauth2/clientcredentials
 golang.org/x/oauth2/internal
-# golang.org/x/sync v0.17.0
+# golang.org/x/sync v0.18.0
 ## explicit; go 1.24.0
 golang.org/x/sync/errgroup
-# golang.org/x/sys v0.37.0
+# golang.org/x/sys v0.38.0
 ## explicit; go 1.24.0
 golang.org/x/sys/unix
 golang.org/x/sys/windows
@@ -511,7 +511,7 @@ golang.org/x/telemetry/counter
 golang.org/x/telemetry/internal/counter
 golang.org/x/telemetry/internal/mmap
 golang.org/x/telemetry/internal/telemetry
-# golang.org/x/text v0.30.0
+# golang.org/x/text v0.31.0
 ## explicit; go 1.24.0
 golang.org/x/text/cases
 golang.org/x/text/internal
@@ -527,15 +527,28 @@ golang.org/x/text/unicode/norm
 ## explicit; go 1.24.0
 golang.org/x/tools/cmd/goimports
 golang.org/x/tools/go/ast/astutil
+golang.org/x/tools/go/ast/edge
+golang.org/x/tools/go/ast/inspector
+golang.org/x/tools/go/gcexportdata
+golang.org/x/tools/go/packages
+golang.org/x/tools/go/types/objectpath
+golang.org/x/tools/go/types/typeutil
+golang.org/x/tools/internal/aliases
 golang.org/x/tools/internal/event
 golang.org/x/tools/internal/event/core
 golang.org/x/tools/internal/event/keys
 golang.org/x/tools/internal/event/label
+golang.org/x/tools/internal/gcimporter
 golang.org/x/tools/internal/gocommand
 golang.org/x/tools/internal/gopathwalk
 golang.org/x/tools/internal/imports
 golang.org/x/tools/internal/modindex
+golang.org/x/tools/internal/packagesinternal
+golang.org/x/tools/internal/pkgbits
 golang.org/x/tools/internal/stdlib
+golang.org/x/tools/internal/typeparams
+golang.org/x/tools/internal/typesinternal
+golang.org/x/tools/internal/versions
 # golang.org/x/tools/godoc v0.1.0-deprecated
 ## explicit; go 1.24.0
 # google.golang.org/protobuf v1.36.10
@@ -582,3 +595,4 @@ gopkg.in/yaml.v2
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
+# github.com/hashicorp/memberlist => github.com/openshift-sustaining/memberlist v0.5.4-sec.1
