@@ -203,7 +203,7 @@ github.com/hashicorp/golang-lru/simplelru
 github.com/hashicorp/golang-lru/v2
 github.com/hashicorp/golang-lru/v2/internal
 github.com/hashicorp/golang-lru/v2/simplelru
-# github.com/hashicorp/memberlist v0.5.1
+# github.com/hashicorp/memberlist v0.5.1 => github.com/openshift-sustaining/memberlist v0.5.1-sec.1
 ## explicit; go 1.20
 github.com/hashicorp/memberlist
 # github.com/jessevdk/go-flags v1.6.1
@@ -490,3 +490,4 @@ gopkg.in/yaml.v2
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
+# github.com/hashicorp/memberlist => github.com/openshift-sustaining/memberlist v0.5.1-sec.1
