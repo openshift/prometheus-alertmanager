@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package memberlist
 
 import (
@@ -12,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	metrics "github.com/armon/go-metrics"
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/armon/go-metrics"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
 // This is the minimum and maximum protocol version that we can
@@ -84,7 +87,8 @@ const (
 	userMsgOverhead        = 1
 	blockingWarning        = 10 * time.Millisecond // Warn if a UDP packet takes this long to process
 	maxPushStateBytes      = 20 * 1024 * 1024
-	maxPushPullRequests    = 128 // Maximum number of concurrent push/pull requests
+	maxPushStateNodes      = 1024 * 1024 // Each requires conservatively  ~20 bytes when encoded
+	maxPushPullRequests    = 128         // Maximum number of concurrent push/pull requests
 )
 
 // ping request sent directly to node
@@ -268,7 +272,7 @@ func (m *Memberlist) handleConn(conn net.Conn) {
 			m.logger.Printf("[ERR] memberlist: failed to receive: %s %s", err, LogConn(conn))
 
 			resp := errResp{err.Error()}
-			out, err := encode(errMsg, &resp)
+			out, err := encode(errMsg, &resp, m.config.MsgpackUseNewTimeFormat)
 			if err != nil {
 				m.logger.Printf("[ERR] memberlist: Failed to encode error response: %s", err)
 				return
@@ -327,7 +331,7 @@ func (m *Memberlist) handleConn(conn net.Conn) {
 		}
 
 		ack := ackResp{p.SeqNo, nil}
-		out, err := encode(ackRespMsg, &ack)
+		out, err := encode(ackRespMsg, &ack, m.config.MsgpackUseNewTimeFormat)
 		if err != nil {
 			m.logger.Printf("[ERR] memberlist: Failed to encode ack: %s", err)
 			return
@@ -770,7 +774,7 @@ func (m *Memberlist) handleCompressed(buf []byte, from net.Addr, timestamp time.
 
 // encodeAndSendMsg is used to combine the encoding and sending steps
 func (m *Memberlist) encodeAndSendMsg(a Address, msgType messageType, msg interface{}) error {
-	out, err := encode(msgType, msg)
+	out, err := encode(msgType, msg, m.config.MsgpackUseNewTimeFormat)
 	if err != nil {
 		return err
 	}
@@ -816,7 +820,7 @@ func (m *Memberlist) rawSendMsgPacket(a Address, node *Node, msg []byte) error {
 
 	// Check if we have compression enabled
 	if m.config.EnableCompression {
-		buf, err := compressPayload(msg)
+		buf, err := compressPayload(msg, m.config.MsgpackUseNewTimeFormat)
 		if err != nil {
 			m.logger.Printf("[WARN] memberlist: Failed to compress payload: %v", err)
 		} else {
@@ -879,7 +883,7 @@ func (m *Memberlist) rawSendMsgPacket(a Address, node *Node, msg []byte) error {
 func (m *Memberlist) rawSendMsgStream(conn net.Conn, sendBuf []byte, streamLabel string) error {
 	// Check if compression is enabled
 	if m.config.EnableCompression {
-		compBuf, err := compressPayload(sendBuf)
+		compBuf, err := compressPayload(sendBuf, m.config.MsgpackUseNewTimeFormat)
 		if err != nil {
 			m.logger.Printf("[ERROR] memberlist: Failed to compress payload: %v", err)
 		} else {
@@ -927,7 +931,11 @@ func (m *Memberlist) sendUserMsg(a Address, sendBuf []byte) error {
 	}
 
 	header := userMsgHeader{UserMsgLen: len(sendBuf)}
-	hd := codec.MsgpackHandle{}
+	hd := codec.MsgpackHandle{
+		BasicHandle: codec.BasicHandle{
+			TimeNotBuiltin: !m.config.MsgpackUseNewTimeFormat,
+		},
+	}
 	enc := codec.NewEncoder(bufConn, &hd)
 	if err := enc.Encode(&header); err != nil {
 		return err
@@ -1211,6 +1219,10 @@ func (m *Memberlist) readRemoteState(bufConn io.Reader, dec *codec.Decoder) (boo
 		return false, nil, nil, err
 	}
 
+	if header.Nodes < 0 || header.Nodes > maxPushStateNodes {
+		return false, nil, nil, fmt.Errorf("number of nodes in header (%d) exceeds limit", header.Nodes)
+	}
+
 	// Allocate space for the transfer
 	remoteNodes := make([]pushNodeState, header.Nodes)
 
@@ -1219,6 +1231,10 @@ func (m *Memberlist) readRemoteState(bufConn io.Reader, dec *codec.Decoder) (boo
 		if err := dec.Decode(&remoteNodes[i]); err != nil {
 			return false, nil, nil, err
 		}
+	}
+
+	if header.UserStateLen < 0 || header.UserStateLen > maxPushStateBytes {
+		return false, nil, nil, fmt.Errorf("user state length (%d) exceeds limit", header.UserStateLen)
 	}
 
 	// Read the remote user state into a buffer
@@ -1337,7 +1353,7 @@ func (m *Memberlist) sendPingAndWaitForAck(a Address, ping ping, deadline time.T
 	defer conn.Close()
 	conn.SetDeadline(deadline)
 
-	out, err := encode(pingMsg, &ping)
+	out, err := encode(pingMsg, &ping, m.config.MsgpackUseNewTimeFormat)
 	if err != nil {
 		return false, err
 	}
