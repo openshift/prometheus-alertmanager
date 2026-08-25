@@ -1,0 +1,60 @@
+FROM brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_golang_1.25 AS builder
+
+WORKDIR /workspace
+
+COPY alertmanager/ .
+RUN cp /cachi2/output/deps/generic/alertmanager-web-ui.tar.gz ./ui/app
+RUN tar -xzf ./ui/app/alertmanager-web-ui.tar.gz -C ./ui/app/
+
+ARG GIT_VERSION=
+ARG GIT_REVISION=unknown
+ARG GIT_BRANCH=
+
+ENV GOFLAGS='-mod=readonly -tags=netgo,timetzdata'
+ENV GOTOOLCHAIN=local
+ENV CGO_ENABLED=1
+ENV GOEXPERIMENT=strictfipsruntime
+ENV NO_DOCKER=true
+ENV GONOSUMCHECK=*
+ENV GONOSUMDB=*
+ENV GOWORK=off
+
+RUN GOLDFLAGS="-X github.com/prometheus/common/version.Version=${GIT_VERSION} \
+    -X github.com/prometheus/common/version.Revision=${GIT_REVISION} \
+    -X github.com/prometheus/common/version.Branch=${GIT_BRANCH} \
+    -X github.com/prometheus/common/version.BuildDate=$(date -u +%Y%m%d-%H:%M:%S)" && \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="$GOLDFLAGS" -o alertmanager github.com/prometheus/alertmanager/cmd/alertmanager && \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="$GOLDFLAGS" -o amtool github.com/prometheus/alertmanager/cmd/amtool
+
+FROM registry.redhat.io/ubi9/ubi-minimal:latest@sha256:8eb2830d0936237fc13a1f2f7e45aecf90d69043380ad167fad0343632937f41
+
+COPY --from=builder workspace/amtool       /bin/amtool
+COPY --from=builder workspace/alertmanager /bin/alertmanager
+COPY --from=builder workspace/examples/ha/alertmanager.yml      /etc/alertmanager/alertmanager.yml
+COPY --from=builder workspace/LICENSE      /licenses/.
+
+RUN mkdir -p /alertmanager && \
+    chown -R nobody:nobody etc/alertmanager /alertmanager
+
+USER       nobody
+EXPOSE     9093
+VOLUME     [ "/alertmanager" ]
+WORKDIR    /alertmanager
+ENTRYPOINT [ "/bin/alertmanager" ]
+CMD        [ "--config.file=/etc/alertmanager/alertmanager.yml", \
+    "--storage.path=/alertmanager" ]
+
+LABEL com.redhat.component="coo-alertmanager" \
+    name="cluster-observability-operator/alertmanager-rhel9" \
+    cpe="cpe:/a:redhat:cluster_observability_operator:1.5::el9" \
+    version="${GIT_VERSION}" \
+    release="${GIT_VERSION}" \
+    vendor="Red Hat, Inc." \
+    distribution-scope="public" \
+    url="https://github.com/prometheus/alertmanager" \
+    summary="Alertmanager for Cluster Observability Operator" \
+    io.openshift.tags="openshift,monitoring" \
+    io.k8s.display-name="Alertmanager" \
+    io.k8s.description="Alertmanager handles alerts sent by client applications such as the Prometheus server" \
+    maintainer="OpenShift Monitoring team <team-monitoring-incluster@redhat.com>" \
+    description="Alertmanager for Cluster Observability Operator"
