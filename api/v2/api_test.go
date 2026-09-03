@@ -35,10 +35,12 @@ import (
 
 	"github.com/prometheus/alertmanager/alert"
 	open_api_models "github.com/prometheus/alertmanager/api/v2/models"
+	alertgroup_ops "github.com/prometheus/alertmanager/api/v2/restapi/operations/alertgroup"
 	general_ops "github.com/prometheus/alertmanager/api/v2/restapi/operations/general"
 	receiver_ops "github.com/prometheus/alertmanager/api/v2/restapi/operations/receiver"
 	silence_ops "github.com/prometheus/alertmanager/api/v2/restapi/operations/silence"
 	"github.com/prometheus/alertmanager/config"
+	"github.com/prometheus/alertmanager/dispatch"
 	"github.com/prometheus/alertmanager/pkg/labels"
 	"github.com/prometheus/alertmanager/silence"
 	"github.com/prometheus/alertmanager/silence/silencepb"
@@ -156,6 +158,93 @@ func TestGetSilencesHandler(t *testing.T) {
 	for i, sil := range silences {
 		assertEqualStrings(t, "silence-"+strconv.Itoa(i)+"-"+*sil.Status.State, *sil.ID)
 	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestGetSilencesHandlerStateFilter(t *testing.T) {
+	now := timestamppb.Now()
+	silences := newSilences(t)
+	m := &silencepb.Matcher{Type: silencepb.Matcher_EQUAL, Name: "a", Pattern: "b"}
+
+	// active silence: starts in the past, ends in the future.
+	activeSil := &silencepb.Silence{
+		MatcherSets: []*silencepb.MatcherSet{{Matchers: []*silencepb.Matcher{m}}},
+		StartsAt:    timestamppb.New(now.AsTime().Add(-time.Hour)),
+		EndsAt:      timestamppb.New(now.AsTime().Add(time.Hour)),
+		UpdatedAt:   now,
+	}
+	require.NoError(t, silences.Set(t.Context(), activeSil))
+
+	// pending silence: starts in the future.
+	pendingSil := &silencepb.Silence{
+		MatcherSets: []*silencepb.MatcherSet{{Matchers: []*silencepb.Matcher{m}}},
+		StartsAt:    timestamppb.New(now.AsTime().Add(time.Hour)),
+		EndsAt:      timestamppb.New(now.AsTime().Add(2 * time.Hour)),
+		UpdatedAt:   now,
+	}
+	require.NoError(t, silences.Set(t.Context(), pendingSil))
+
+	// expired silence: explicitly expired via Expire().
+	expiredSil := &silencepb.Silence{
+		MatcherSets: []*silencepb.MatcherSet{{Matchers: []*silencepb.Matcher{m}}},
+		StartsAt:    timestamppb.New(now.AsTime().Add(-time.Hour)),
+		EndsAt:      timestamppb.New(now.AsTime().Add(time.Hour)),
+		UpdatedAt:   now,
+	}
+	require.NoError(t, silences.Set(t.Context(), expiredSil))
+	require.NoError(t, silences.Expire(t.Context(), expiredSil.Id))
+
+	api := API{
+		uptime:   time.Now(),
+		silences: silences,
+		logger:   promslog.NewNopLogger(),
+	}
+
+	callHandler := func(active, expired, pending *bool) []*open_api_models.GettableSilence {
+		r, err := http.NewRequest("GET", "/api/v2/silences", nil)
+		require.NoError(t, err)
+		w := httptest.NewRecorder()
+		p := runtime.TextProducer()
+		responder := api.getSilencesHandler(silence_ops.GetSilencesParams{
+			HTTPRequest: r,
+			Active:      active,
+			Expired:     expired,
+			Pending:     pending,
+		})
+		responder.WriteResponse(w, p)
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp []*open_api_models.GettableSilence
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		return resp
+	}
+
+	stateSet := func(sils []*open_api_models.GettableSilence) map[string]bool {
+		states := make(map[string]bool, len(sils))
+		for _, s := range sils {
+			states[string(*s.Status.State)] = true
+		}
+		return states
+	}
+
+	// No filter params (all true) - all three states returned.
+	require.Len(t, callHandler(boolPtr(true), boolPtr(true), boolPtr(true)), 3)
+
+	// active=false - active silences excluded.
+	got := stateSet(callHandler(boolPtr(false), boolPtr(true), boolPtr(true)))
+	require.False(t, got["active"])
+	require.True(t, got["expired"] || got["pending"])
+
+	// expired=false - expired silences excluded.
+	got = stateSet(callHandler(boolPtr(true), boolPtr(false), boolPtr(true)))
+	require.False(t, got["expired"])
+
+	// pending=false - pending silences excluded.
+	got = stateSet(callHandler(boolPtr(true), boolPtr(true), boolPtr(false)))
+	require.False(t, got["pending"])
+
+	// all false - empty result.
+	require.Empty(t, callHandler(boolPtr(false), boolPtr(false), boolPtr(false)))
 }
 
 func TestDeleteSilenceHandler(t *testing.T) {
@@ -362,11 +451,11 @@ func getSilences(
 	r, err := http.NewRequest("GET", "/api/v2/silences", nil)
 	require.NoError(t, err)
 
+	params := silence_ops.NewGetSilencesParams()
+	params.HTTPRequest = r
+
 	p := runtime.TextProducer()
-	responder := handlerFunc(silence_ops.GetSilencesParams{
-		HTTPRequest: r,
-		Filter:      nil,
-	})
+	responder := handlerFunc(params)
 	responder.WriteResponse(w, p)
 }
 
@@ -943,4 +1032,63 @@ func TestPostSilences_QuotedMatchers(t *testing.T) {
 	require.Len(t, silProto.MatcherSets, 1)
 	require.Len(t, silProto.MatcherSets[0].Matchers, 1)
 	require.Equal(t, "\"bar\"", silProto.MatcherSets[0].Matchers[0].Pattern)
+}
+
+func TestGetAlertGroupsHandlerRouteLabels(t *testing.T) {
+	in := `
+route:
+    receiver: team-X
+    routes:
+      - receiver: team-X
+        labels:
+          team: X
+
+receivers:
+- name: 'team-X'
+`
+	cfg, err := config.Load(in)
+	require.NoError(t, err)
+
+	group := &dispatch.AlertGroup{
+		Labels:      model.LabelSet{"alertname": "Foo"},
+		RouteLabels: model.LabelSet{"team": "X"},
+		Receiver:    "team-X",
+		GroupKey:    "key",
+		RouteID:     "route",
+	}
+
+	api := API{
+		uptime: time.Now(),
+		logger: promslog.NewNopLogger(),
+		alertGroups: func(context.Context, func(*dispatch.Route) bool, func(*alert.Alert, time.Time) bool) (dispatch.AlertGroups, map[model.Fingerprint][]string, error) {
+			return dispatch.AlertGroups{group}, map[model.Fingerprint][]string{}, nil
+		},
+		groupMutedFunc: func(routeID, groupKey string) ([]string, bool) {
+			return nil, false
+		},
+	}
+	api.Update(cfg, func(context.Context, model.LabelSet) {})
+
+	r, err := http.NewRequest("GET", "/api/v2/alerts/groups", nil)
+	require.NoError(t, err)
+
+	truePtr := true
+	responder := api.getAlertGroupsHandler(alertgroup_ops.GetAlertGroupsParams{
+		HTTPRequest: r,
+		Active:      &truePtr,
+		Silenced:    &truePtr,
+		Inhibited:   &truePtr,
+		Muted:       &truePtr,
+	})
+
+	w := httptest.NewRecorder()
+	responder.WriteResponse(w, runtime.JSONProducer())
+	require.Equal(t, 200, w.Code)
+
+	body, _ := io.ReadAll(w.Result().Body)
+
+	var groups open_api_models.AlertGroups
+	require.NoError(t, json.Unmarshal(body, &groups))
+	require.Len(t, groups, 1)
+	require.Equal(t, open_api_models.LabelSet{"team": "X"}, groups[0].RouteLabels)
 }
