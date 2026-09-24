@@ -34,9 +34,9 @@ require (
 	github.com/stretchr/testify v1.7.0
 	github.com/xlab/treeprint v1.1.0
 	go.uber.org/atomic v1.9.0
-	golang.org/x/mod v0.8.0
-	golang.org/x/net v0.17.0
-	golang.org/x/tools v0.6.0
+	golang.org/x/mod v0.17.0
+	golang.org/x/net v0.25.0
+	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	gopkg.in/telebot.v3 v3.0.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -76,13 +76,15 @@ require (
 	github.com/prometheus/procfs v0.7.3 // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
 	go.mongodb.org/mongo-driver v1.8.3 // indirect
-	golang.org/x/crypto v0.14.0 // indirect
+	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/oauth2 v0.0.0-20210514164344-f6687ab2804c // indirect
-	golang.org/x/sys v0.13.0 // indirect
-	golang.org/x/text v0.13.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 	google.golang.org/appengine v1.6.6 // indirect
 	google.golang.org/protobuf v1.26.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 )
 
 go 1.17
+
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.35.0-sec.4
