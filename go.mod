@@ -85,4 +85,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 )
 
+replace github.com/hashicorp/memberlist => github.com/openshift-sustaining/memberlist v0.3.1-sec.1
+
 go 1.17
