@@ -93,3 +93,5 @@ require (
 )
 
 replace golang.org/x/net => github.com/openshift-sustaining/net v0.35.0-sec.4
+
+replace github.com/hashicorp/memberlist => github.com/openshift-sustaining/memberlist v0.5.0-sec.1
