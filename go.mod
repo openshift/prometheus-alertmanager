@@ -91,3 +91,5 @@ require (
 	google.golang.org/protobuf v1.30.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/hashicorp/memberlist => github.com/openshift-sustaining/memberlist v0.5.0-sec.1
