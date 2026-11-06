@@ -86,18 +86,12 @@ func encodeBlockBetterGo(dst, src []byte) (d int) {
 	// We initialize repeat to 0, so we never match on first attempt
 	repeat := 0
 
-	// Cap the adaptive skip, as encodeBetterBlockAsm and the snappy Go encoder
-	// below already do. Without a cap, a long stretch with no matches lets the
-	// skip grow geometrically until it strides past the start of the next
-	// compressible region and loses the matches there.
-	const maxSkip = 100
-
 	for {
 		candidateL := 0
 		nextS := 0
 		for {
 			// Next src position to check
-			nextS = s + min((s-nextEmit)>>7+1, maxSkip)
+			nextS = s + (s-nextEmit)>>7 + 1
 			if nextS > sLimit {
 				goto emitRemainder
 			}
