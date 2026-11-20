@@ -139,9 +139,11 @@ func (w *Writer) Reset(writer io.Writer) {
 
 	toWrite := make(chan chan result, w.concurrency)
 	w.output = toWrite
+	w.writerWg.Add(1)
 
 	// Start a writer goroutine that will write all output in order.
-	w.writerWg.Go(func() {
+	go func() {
+		defer w.writerWg.Done()
 
 		// Get a queued write.
 		for write := range toWrite {
@@ -173,7 +175,7 @@ func (w *Writer) Reset(writer io.Writer) {
 			// This can be used for synchronizing flushes.
 			close(write)
 		}
-	})
+	}()
 }
 
 // Write satisfies the io.Writer interface.
@@ -809,7 +811,7 @@ func (w *Writer) closeIndex(idx bool) ([]byte, error) {
 			if w.pad <= 1 {
 				compSize = w.written
 			}
-			index = w.index.appendTo(w.ibuf[:0], compSize, w.uncompWritten)
+			index = w.index.appendTo(w.ibuf[:0], w.uncompWritten, compSize)
 			// Count as written for padding.
 			if w.appendIndex {
 				w.written += int64(len(index))
